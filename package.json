@@ -1,7 +1,9 @@
 {
   "name": "neuroskill",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "author": "NeuroSkill team (https://neuroskill.com)",
+  "repository": "https://github.com/NeuroSkill-com/neuroloop",
+  "homepage": "https://neuroskill.dev",
   "contributors": [
     "Nataliya Kosmyna <nkosmyna@mit.edu>",
     "Eugene Hauptmann <eugenehp@mit.edu>"
