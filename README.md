@@ -4,6 +4,8 @@
 
 > ⚠ **Research Use Only.** All metrics are experimental outputs derived from consumer-grade EXG hardware. They are **not** validated clinical measurements, not FDA/CE-cleared, and must not be used for diagnosis, treatment decisions, or any medical purpose.
 
+[Paper](https://arxiv.org/abs/2603.03212)
+
 ---
 
 ## Table of Contents
