@@ -1,9 +1,12 @@
 #!/usr/bin/env npx tsx
 /** Current CLI version — bump when breaking changes are made. */
-const CLI_VERSION = "1.1.0";
+const CLI_VERSION = "1.2.0";
 
 /**
  * npx neuroskill — Command-line interface for the Skill WebSocket API.
+ *
+ * Supported devices: Muse (4ch), OpenBCI Ganglion (4ch), Neurable MW75 Neuro (12ch), Hermes V1 (8ch).
+ * All commands work identically regardless of which device is connected.
  *
  * Usage:
  *   npx neuroskill <command> [options]
@@ -16,14 +19,68 @@ const CLI_VERSION = "1.1.0";
  *   notify "title" ["body"]        Show a native OS notification
  *   label "text"                   Create a timestamped annotation on the current moment
  *   search-labels "query"          Search labels by free text (text/context/both modes)
+ *   search-images "query"          Search screenshots by OCR text (semantic/substring modes)
+ *   search-images --by-image <path> Search screenshots by visual similarity (CLIP embeddings)
+ *   screenshots-around --at <utc>  Find screenshots near a timestamp (±window)
+ *   screenshots-for-eeg            Find screenshots captured during an EEG session
+ *   eeg-for-screenshots "query"    Find EEG data & labels near screenshots matching OCR text
  *   interactive "keyword"          Cross-modal 4-layer graph search (labels → EEG → found labels)
  *   search                         ANN EEG-similarity search (auto: last session, k=5)
  *   compare                        Side-by-side A/B metrics (auto: last 2 sessions)
  *   sleep [index]                  Sleep staging — index selects session (0=latest, 1=prev, …)
+ *   sleep-schedule                 Show current sleep schedule (bedtime, wake time, preset)
+ *   sleep-schedule set [opts]      Update sleep schedule: --bedtime HH:MM --wake HH:MM --preset <id>
  *   calibrate                      Open calibration window and start immediately
  *   timer                          Open focus-timer window and start work phase immediately
  *   umap                           3D UMAP projection with live progress bar
  *   listen                         Stream broadcast events for N seconds
+ *   hooks                          List Proactive Hook rules, scenarios, and last-trigger metadata
+ *   hooks list                     List raw hook rules (name, keywords, threshold, …)
+ *   hooks add <name> [opts]        Add a new hook rule
+ *   hooks remove <name>            Delete a hook by name
+ *   hooks enable <name>            Enable a hook
+ *   hooks disable <name>           Disable a hook
+ *   hooks update <name> [opts]     Update fields on an existing hook
+ *   hooks suggest "kw1,kw2"        Suggest threshold from real EEG/label data
+ *   hooks log [--limit N --offset M]  View paginated hook trigger audit log rows
+ *   health                          HealthKit summary (last 24h) — sleep, workouts, steps, HR, metrics
+ *   health summary [--start --end] Aggregate counts for a time range
+ *   health sleep [--start --end]   Query Apple Health sleep samples
+ *   health workouts [--start --end] Query workout sessions
+ *   health hr [--start --end]      Query heart rate samples
+ *   health steps [--start --end]   Query step counts
+ *   health metrics --metric-type <t> [--start --end] Query scalar health metrics
+ *   health metric-types            List all stored metric types
+ *   health sync <json>             Push HealthKit data (iOS companion format)
+ *   dnd                            Show DND automation status (config + live eligibility + OS state)
+ *   dnd on                         Force-enable DND immediately (bypass EEG threshold)
+ *   dnd off                        Force-disable DND immediately
+ *   llm status                     LLM server status (stopped/loading/running)
+ *   llm start                      Load active model and start LLM inference server
+ *   llm stop                       Stop LLM inference server and free GPU memory
+ *   llm catalog                    Show model catalog with download states
+ *   llm add <repo> <filename>      Add an external HF model to the catalog and download it
+ *   llm add <hf-url>               Add from a full HuggingFace URL
+ *   llm add ... --mmproj <file>    Also add and download a vision projector from the same repo
+ *   llm select <filename>          Set the active text model
+ *   llm mmproj <filename|none>     Set the active vision projector (or "none" to disable)
+ *   llm autoload-mmproj <on|off>   Toggle auto-loading of vision projector on start
+ *   llm download <filename>        Download a GGUF model (fire-and-forget; poll catalog for progress)
+ *   llm pause <filename>           Pause an in-progress model download
+ *   llm resume <filename>          Resume a paused model download
+ *   llm cancel <filename>          Cancel an in-progress model download
+ *   llm delete <filename>          Delete a locally-cached model file
+ *   llm downloads                  List all downloads with status and progress
+ *   llm refresh                    Re-probe the HF Hub cache for externally downloaded models
+ *   llm fit                        Check which models fit in available RAM/VRAM
+ *   llm logs                       Print last 500 LLM server log lines
+ *   llm chat                       Interactive multi-turn chat REPL (WebSocket only)
+ *   llm chat "message"             Single-shot: send one message and stream the reply
+ *   llm chat "describe" --image a.jpg --image b.png   Vision: attach images to message
+ *
+ *   The LLM supports built-in tool calling (bash, read/write/edit, web search/fetch)
+ *   which are executed server-side and results fed back into the conversation.
+ *
  *   raw '{"command":"..."}'        Send arbitrary JSON, print full response
  *
  * Transport selection (default: try WebSocket, fall back to HTTP):
@@ -56,16 +113,19 @@ const CLI_VERSION = "1.1.0";
  * Examples:
  *   npx neuroskill status                           # → device, scores, sleep, embeddings
  *   npx neuroskill status --json | jq '.scores'     # → pipe to jq
-
  *   npx neuroskill sessions                         # → 3 session(s) with timestamps
  *   npx neuroskill sessions --json | jq '.sessions[0]'
  *   npx neuroskill say "Eyes open. Starting calibration."
  *   npx neuroskill say "Break time. Next: Eyes Closed." --voice Jasper
+ *   npx neuroskill say "Break time. Next: Eyes Closed." --http
  *   npx neuroskill notify "Session done" "Great work!"
  *   npx neuroskill label "meditation start"         # → { label_id: 42 }
  *   npx neuroskill label "eyes closed" --context "4-7-8 breathing" --at 1740412800
  *   npx neuroskill calibrations                     # → list all profiles
  *   npx neuroskill calibrations get <id>            # → full profile JSON
+ *   npx neuroskill calibrations create "name" --actions "L1:20,L2:20" [--loops 3] [--break 5] [--auto-start]
+ *   npx neuroskill calibrations update <id-or-name> [--name ...] [--actions ...] [--loops N] [--break N] [--auto-start]
+ *   npx neuroskill calibrations delete <id-or-name>
  *   npx neuroskill search-labels "focused reading"  # → semantic label search
  *   npx neuroskill search-labels "deep work" --mode context --k 5
  *   npx neuroskill interactive "deep focus"         # → cross-modal graph (summary)
@@ -84,6 +144,15 @@ const CLI_VERSION = "1.1.0";
  *   npx neuroskill umap                             # auto: last 2 sessions → 3D points
  *   npx neuroskill umap --json | jq '.points | length'
  *   npx neuroskill listen --seconds 30              # 30s event stream
+ *   npx neuroskill hooks --json | jq '.hooks[] | {name: .hook.name, scenario: .hook.scenario, last: .last_trigger.triggered_at_utc}'
+ *   npx neuroskill hooks list --json
+ *   npx neuroskill hooks add "Deep Work Guard" --keywords "focus,deep work,flow" --scenario cognitive --threshold 0.14
+ *   npx neuroskill hooks update "Deep Work Guard" --keywords "focus,flow" --threshold 0.12
+ *   npx neuroskill hooks enable "Deep Work Guard"
+ *   npx neuroskill hooks disable "Deep Work Guard"
+ *   npx neuroskill hooks remove "Deep Work Guard"
+ *   npx neuroskill hooks suggest "focus,deep work"
+ *   npx neuroskill hooks log --limit 10 --offset 0
  *   npx neuroskill raw '{"command":"search","start_utc":1740412800,"end_utc":1740415500,"k":3}'
  *
  * Requires: Node ≥ 18, bonjour-service + ws (devDependencies).
@@ -582,10 +651,101 @@ interface Args {
   at?: number;
   /** Voice name for the `say` command (e.g. "Jasper"). Uses server default when omitted. */
   voice?: string;
-  /** Subaction for the `calibrations` command: "list" | "get". */
+  /** Subaction for the `calibrations` command: "list" | "get" | "create" | "update" | "delete". */
   subAction?: string;
   /** Numeric ID for `calibrations get <id>`. */
   id?: number;
+  /**
+   * Calibration profile UUID for `calibrations update/delete`.
+   * Populated from the first positional arg after the subcommand.
+   */
+  profileId?: string;
+  /**
+   * Calibration profile name for `calibrations create` / `calibrations update --name`.
+   * For `create`: first positional arg after subcommand.
+   * For `update`: via `--name` flag.
+   */
+  calName?: string;
+  /**
+   * Calibration actions string for `calibrations create` / `update --actions`.
+   * Compact format: `"Eyes Open:20,Eyes Closed:20"` (label:duration_secs pairs).
+   */
+  calActions?: string;
+  /** Loop count for `calibrations create` / `update --loops`. */
+  calLoops?: number;
+  /** Break duration (seconds) for `calibrations create` / `update --break`. */
+  calBreak?: number;
+  /** Auto-start flag for `calibrations create` / `update --auto-start`. */
+  calAutoStart?: boolean;
+  /** Generic pagination limit for subcommands that support it (e.g. hooks log). */
+  limit?: number;
+  /** Generic pagination offset for subcommands that support it (e.g. hooks log). */
+  offset?: number;
+  /** Hook keywords (comma-separated) for `hooks add` / `hooks update --keywords`. */
+  hookKeywords?: string;
+  /** Hook scenario for `hooks add` / `hooks update --scenario`. */
+  hookScenario?: string;
+  /** Hook command for `hooks add` / `hooks update --command`. */
+  hookCommand?: string;
+  /** Hook text payload for `hooks add` / `hooks update --text`. */
+  hookText?: string;
+  /** Hook distance threshold for `hooks add` / `hooks update --threshold`. */
+  hookThreshold?: number;
+  /** Hook recent-refs limit for `hooks add` / `hooks update --recent`. */
+  hookRecent?: number;
+  /** Hook name captured as second positional arg for hooks add/remove/enable/disable/update. */
+  hookName?: string;
+  /** Health data type for `health` queries (sleep, workouts, heart_rate, steps, metrics). */
+  healthType?: string;
+  /** Metric type for `health metrics` queries (e.g. restingHeartRate, hrv, vo2Max). */
+  metricType?: string;
+  /** Bedtime for `sleep-schedule set --bedtime HH:MM` (24-h format). */
+  bedtime?: string;
+  /** Wake time for `sleep-schedule set --wake HH:MM` (24-h format). */
+  wake?: string;
+  /** Preset id for `sleep-schedule set --preset <id>`. */
+  preset?: string;
+  /**
+   * Image file path for `search-images --by-image <path>` (CLIP vision search).
+   * When set, the image is embedded via the CLIP model and searched against
+   * the screenshots HNSW index instead of OCR text.
+   */
+  byImage?: string;
+  /**
+   * EEG temporal window in seconds for cross-modal commands
+   * (`screenshots-for-eeg`, `eeg-for-screenshots`).
+   * Default: 30 for screenshots-for-eeg, 60 for eeg-for-screenshots.
+   */
+  windowSecs?: number;
+  /**
+   * Vision projector filename for `llm add --mmproj <filename>`.
+   * When specified alongside `llm add`, both the model and the mmproj are
+   * added to the catalog and downloaded from the same repo.
+   */
+  mmproj?: string;
+  /**
+   * One or more image file paths for `llm chat`.
+   * Each file is base64-encoded and embedded as an `image_url` content part.
+   * Can be specified multiple times: `--image a.jpg --image b.png`.
+   * Requires the LLM server to be loaded with a vision-capable model (mmproj).
+   */
+  images?: string[];
+  /**
+   * System prompt for `llm chat` (prepended as a `{ role: "system" }` message).
+   * Example: `--system "You are a concise EEG assistant."`.
+   * Omit to let the model use its built-in defaults.
+   */
+  system?: string;
+  /**
+   * Maximum tokens to generate per llm_chat turn.
+   * Passed as `max_tokens` in GenParams.  Default: model default (2048).
+   */
+  maxTokens?: number;
+  /**
+   * Sampling temperature for llm_chat (0 = deterministic, 1 = creative).
+   * Passed as `temperature` in GenParams.  Default: 0.8.
+   */
+  temperature?: number;
 }
 
 /**
@@ -629,7 +789,13 @@ function parseArgs(): Args {
     "--start", "--end", "--a-start", "--a-end", "--b-start", "--b-end",
     "--k", "--k-text", "--k-eeg", "--k-labels", "--reach", "--ef",
     "--mode", "--profile", "--seconds", "--poll",
+    "--limit", "--offset",
     "--context", "--at", "--voice",
+    "--system", "--max-tokens", "--temperature", "--image", "--mmproj",
+    "--keywords", "--scenario", "--command", "--threshold", "--recent", "--hook-text",
+    "--actions", "--loops", "--break", "--auto-start", "--name", "--by-image", "--window",
+    "--bedtime", "--wake", "--preset",
+    "--metric-type",
   ]);
 
   let i = 0;
@@ -660,28 +826,140 @@ function parseArgs(): Args {
     else if (a === "--ef")       { args.ef      = nextInt("--ef");      }
     else if (a === "--seconds")  { args.seconds = nextInt("--seconds"); }
     else if (a === "--poll")     { args.poll    = nextInt("--poll");    }
-    else if (a === "--at")       { args.at      = nextInt("--at");      }
-    else if (a === "--mode")     { args.mode    = argv[++i]; }
-    else if (a === "--profile")  { args.profile = argv[++i]; }
-    else if (a === "--context")  { args.context = argv[++i]; }
-    else if (a === "--voice")    { args.voice   = argv[++i]; }
+    else if (a === "--limit")    { args.limit   = nextInt("--limit");   }
+    else if (a === "--offset")   { args.offset  = nextInt("--offset");  }
+    else if (a === "--at")          { args.at          = nextInt("--at");          }
+    else if (a === "--max-tokens")  { args.maxTokens   = nextInt("--max-tokens");   }
+    else if (a === "--mode")        { args.mode        = argv[++i]; }
+    else if (a === "--profile")     { args.profile     = argv[++i]; }
+    else if (a === "--context")     { args.context     = argv[++i]; }
+    else if (a === "--voice")       { args.voice       = argv[++i]; }
+    else if (a === "--system")      { args.system      = argv[++i]; }
+    else if (a === "--image")       { (args.images ??= []).push(argv[++i]); }
+    else if (a === "--by-image")    { args.byImage   = argv[++i]; }
+    else if (a === "--window")      { args.windowSecs = nextInt("--window"); }
+    else if (a === "--mmproj")      { args.mmproj   = argv[++i]; }
+    else if (a === "--keywords")    { args.hookKeywords  = argv[++i]; }
+    else if (a === "--scenario")    { args.hookScenario  = argv[++i]; }
+    else if (a === "--command")     { args.hookCommand   = argv[++i]; }
+    else if (a === "--hook-text")   { args.hookText      = argv[++i]; }
+    else if (a === "--threshold")   {
+      const raw = argv[++i];
+      const n   = Number(raw);
+      if (raw == null || raw.trim() === "" || isNaN(n)) {
+        console.error(`error: --threshold requires a numeric value (got: ${JSON.stringify(raw)})`);
+        process.exit(1);
+      }
+      args.hookThreshold = n;
+    }
+    else if (a === "--recent")      { args.hookRecent    = nextInt("--recent"); }
+    else if (a === "--temperature") {
+      const raw = argv[++i];
+      const n   = Number(raw);
+      if (raw == null || raw.trim() === "" || isNaN(n)) {
+        console.error(`error: --temperature requires a numeric value (got: ${JSON.stringify(raw)})`);
+        process.exit(1);
+      }
+      args.temperature = n;
+    }
+    else if (a === "--actions")     { args.calActions   = argv[++i]; }
+    else if (a === "--loops")       { args.calLoops     = nextInt("--loops"); }
+    else if (a === "--break")       { args.calBreak     = nextInt("--break"); }
+    else if (a === "--auto-start")  { args.calAutoStart = true; }
+    else if (a === "--name")        { args.calName      = argv[++i]; }
+    else if (a === "--metric-type") { args.metricType    = argv[++i]; }
+    else if (a === "--bedtime")     { args.bedtime      = argv[++i]; }
+    else if (a === "--wake")        { args.wake          = argv[++i]; }
+    else if (a === "--preset")      { args.preset        = argv[++i]; }
     // ── Positional arguments ─────────────────────────────────────────────
     else if (!args.command)      { args.command = a.toLowerCase(); }
     else if (args.command === "label"         && !args.text)    { args.text    = a; }
     else if (args.command === "search-labels" && !args.text)    { args.text    = a; }
+    else if (args.command === "search-images" && !args.text)    { args.text    = a; }
+    else if (args.command === "eeg-for-screenshots" && !args.text) { args.text = a; }
     else if (args.command === "interactive"   && !args.keyword) { args.keyword = a; }
     else if (args.command === "say"           && !args.text)    { args.text    = a; }
     else if (args.command === "notify"        && !args.text)    { args.text    = a; }
     else if (args.command === "notify"        && !args.body)    { args.body    = a; }
     else if (args.command === "raw"           && !args.rawJson) { args.rawJson = a; }
+    else if (args.command === "llm" && !args.subAction) {
+      // llm <subAction> [arg]
+      args.subAction = a.toLowerCase();
+    }
+    else if (args.command === "llm" && args.subAction === "download" && !args.text) {
+      args.text = a; // model filename
+    }
+    else if (args.command === "llm" && args.subAction === "cancel" && !args.text) {
+      args.text = a; // model filename
+    }
+    else if (args.command === "llm" && args.subAction === "pause" && !args.text) {
+      args.text = a; // model filename
+    }
+    else if (args.command === "llm" && args.subAction === "resume" && !args.text) {
+      args.text = a; // model filename
+    }
+    else if (args.command === "llm" && args.subAction === "delete" && !args.text) {
+      args.text = a; // model filename
+    }
+    else if (args.command === "llm" && args.subAction === "select" && !args.text) {
+      args.text = a; // model filename
+    }
+    else if (args.command === "llm" && args.subAction === "mmproj" && !args.text) {
+      args.text = a; // mmproj filename (or "none" to disable)
+    }
+    else if (args.command === "llm" && args.subAction === "add" && !args.text) {
+      args.text = a; // repo (first positional) or repo/filename combined
+    }
+    else if (args.command === "llm" && args.subAction === "add" && args.text && !args.body) {
+      args.body = a; // filename (second positional)
+    }
+    else if (args.command === "llm" && args.subAction === "autoload-mmproj" && !args.text) {
+      args.text = a; // on/off
+    }
+    else if (args.command === "llm" && args.subAction === "fit" && !args.text) {
+      args.text = a; // optional filename filter
+    }
+    else if (args.command === "llm" && args.subAction === "chat" && !args.text) {
+      args.text = a; // user message
+    }
+    else if (args.command === "dnd" && !args.subAction && (a === "on" || a === "off")) {
+      args.subAction = a; // "on" or "off" → maps to dnd_set { enabled: true/false }
+    }
+    else if (args.command === "sleep-schedule" && !args.subAction && a === "set") {
+      args.subAction = "set";
+    }
+    else if (args.command === "health" && !args.subAction) {
+      args.subAction = a.toLowerCase();
+    }
+    else if (args.command === "health" && args.subAction === "sync" && !args.rawJson) {
+      args.rawJson = a; // JSON payload
+    }
     else if (args.command === "calibrations"  && !args.subAction) {
-      // calibrations [list|get] [<id>]
+      // calibrations [list|get|create|update|delete] [<id-or-name>]
       args.subAction = a.toLowerCase();
     }
     else if (args.command === "calibrations"  && args.subAction === "get" && args.id == null) {
       const n = Number(a);
       if (isNaN(n)) { console.error(`error: calibrations get requires a numeric id (got: ${JSON.stringify(a)})`); process.exit(1); }
       args.id = n;
+    }
+    else if (args.command === "calibrations" && args.subAction === "create" && !args.calName) {
+      args.calName = a; // profile name
+    }
+    else if (args.command === "calibrations" && args.subAction === "update" && !args.profileId) {
+      args.profileId = a; // profile UUID or name
+    }
+    else if (args.command === "calibrations" && args.subAction === "delete" && !args.profileId) {
+      args.profileId = a; // profile UUID or name
+    }
+    else if (args.command === "hooks" && !args.subAction) {
+      args.subAction = a.toLowerCase();
+    }
+    else if (args.command === "hooks" && args.subAction === "suggest" && !args.text) {
+      args.text = a;
+    }
+    else if (args.command === "hooks" && ["add", "remove", "enable", "disable", "update"].includes(args.subAction ?? "") && !args.hookName) {
+      args.hookName = a;
     }
     else if (args.command === "session" || args.command === "sleep") {
       const n = Number(a);
@@ -713,21 +991,71 @@ ${BOLD}USAGE${RESET}
 
 ${BOLD}COMMANDS${RESET}
 ${m("status [--poll <secs>]",                         "full device, session, embeddings, scores snapshot; re-poll every N secs")}
+${m('say "text"',                                    "speak text aloud via on-device TTS (fire-and-forget; returns immediately)")}
 ${m("session [index]",                               "all metrics + trends for one session (0=latest, 1=prev, …)")}
 ${m("sessions",                                      "list all recording sessions across all days")}
-${m('say "text"',                                    "speak text aloud via on-device TTS (fire-and-forget; returns immediately)")}
 ${m('notify "title" ["body"]',                       "show a native OS notification")}
 ${m('label "my annotation" [--context "..."] [--at <utc>]', "create a timestamped text annotation")}
 ${m('search-labels "query" [--mode text|context|both] [--k <n>] [--ef <n>]', "search labels by free text")}
+${m('search-images "query" [--mode semantic|substring] [--k <n>]', "search screenshots by OCR text")}
+${m("search-images --by-image <path> [--k <n>]", "search screenshots by visual similarity (CLIP)")}
+${m("screenshots-around --at <utc> [--seconds <n>]", "find screenshots near a timestamp (±window)")}
+${m("screenshots-for-eeg [--start --end] [--window <n>]", "find screenshots near EEG epoch timestamps")}
+${m('eeg-for-screenshots "query" [--k <n>] [--window <n>]', "screenshots → EEG: find brain data near matching screenshots")}
 ${m('interactive "keyword" [--k-text <n>] [--k-eeg <n>] [--k-labels <n>] [--reach <n>]', "cross-modal 4-layer graph search")}
 ${m("search [--start <utc>] [--end <utc>] [--k <n>]", "ANN EEG-similarity search on embeddings")}
 ${m("compare --a-start .. --a-end .. --b-start .. --b-end ..", "side-by-side metrics + UMAP")}
 ${m("sleep [index] [--start <utc>] [--end <utc>]",   "sleep staging — index selects session (0=latest, 1=prev)")}
 ${m("calibrations [list|get <id>]",                  "list calibration profiles or inspect one by ID")}
+${m('calibrations create "name" --actions "L1:20,L2:20"', "create a new calibration profile")}
+${m("calibrations update <id-or-name> [opts]",       "update an existing calibration profile")}
+${m("calibrations delete <id-or-name>",              "delete a calibration profile")}
 ${m("calibrate [--profile <name-or-id>]",            "open calibration window and start profile immediately")}
 ${m("timer",                                         "open focus-timer window and start work phase immediately")}
 ${m("umap [--a-start .. --a-end .. --b-start .. --b-end ..]", "3D UMAP projection (waits for result)")}
+${m("sleep-schedule",                                   "show current sleep schedule (bedtime, wake time, duration, preset)")}
+${m("sleep-schedule set --bedtime HH:MM --wake HH:MM",  "update sleep schedule (supports --preset <id>)")}
+${m("health",                                           "HealthKit summary — sleep, workouts, steps, heart rate, metrics (last 24h)")}
+${m("health summary [--start --end]",                   "aggregate counts for a custom time range")}
+${m("health sleep [--start --end] [--limit N]",         "query Apple Health sleep samples")}
+${m("health workouts [--start --end] [--limit N]",      "query workout sessions")}
+${m("health hr [--start --end] [--limit N]",            "query heart rate samples")}
+${m("health steps [--start --end] [--limit N]",         "query step counts")}
+${m("health metrics --metric-type <t> [--start --end]", "query scalar health metrics (restingHeartRate, hrv, vo2Max, …)")}
+${m("health metric-types",                              "list all stored metric types")}
+${m('health sync \'{"sleep":[...]}\'',                  "push HealthKit data from iOS companion (JSON payload)")}
+${m("dnd [on|off]",                                    "show DND automation status; 'on'/'off' force-overrides immediately")}
+${m("llm status",                                      "LLM server status (stopped/loading/running)")}
+${m("llm start",                                     "load active model and start LLM inference server")}
+${m("llm stop",                                      "stop LLM inference server and free GPU memory")}
+${m("llm catalog",                                   "show model catalog with download states")}
+${m("llm add <repo> <filename>",                      "add an external HF model to the catalog and download it")}
+${m("llm add <hf-url>",                               "add from a full HuggingFace URL")}
+${m("llm add ... --mmproj <file>",                    "also add and download a vision projector from the same repo")}
+${m("llm select <filename>",                         "set the active text model")}
+${m("llm mmproj <filename|none>",                    "set the active vision projector (or 'none' to disable)")}
+${m("llm autoload-mmproj <on|off>",                  "toggle auto-loading of vision projector on start")}
+${m("llm download <filename>",                       "download a GGUF model by filename (fire-and-forget)")}
+${m("llm pause <filename>",                          "pause an in-progress model download")}
+${m("llm resume <filename>",                         "resume a paused model download")}
+${m("llm cancel <filename>",                         "cancel an in-progress model download")}
+${m("llm delete <filename>",                         "delete a locally-cached model file")}
+${m("llm downloads",                                 "list all downloads with status and progress")}
+${m("llm refresh",                                   "re-probe HF Hub cache for externally downloaded models")}
+${m("llm fit",                                       "check which models fit in available RAM/VRAM")}
+${m("llm logs",                                      "print last 500 LLM server log lines")}
+${m("llm chat",                                       "interactive multi-turn chat REPL; type /help inside for commands")}
+${m('llm chat "message"',                            "single-shot: send one message, stream the reply, and exit")}
 ${m("listen [--seconds <n>]",                        "listen for broadcast events (default: 5s)")}
+${m("hooks",                                         "list Proactive Hooks (scenario + last trigger metadata)")}
+${m("hooks list",                                    "list raw hook rules (name, keywords, threshold, …)")}
+${m("hooks add <name> [--keywords …] [opts]",       "add a new hook rule")}
+${m("hooks remove <name>",                           "delete a hook by name")}
+${m("hooks enable <name>",                           "enable a hook")}
+${m("hooks disable <name>",                          "disable a hook")}
+${m("hooks update <name> [--keywords …] [opts]",    "update fields on an existing hook")}
+${m('hooks suggest "kw1,kw2"',                       "suggest threshold from matching labels + recent EEG embeddings")}
+${m("hooks log [--limit <n>] [--offset <n>]",       "show hook trigger audit history from hooks.sqlite")}
 ${m("raw '{\"command\":\"status\"}'",                "send raw JSON, print full response")}
 
 ${BOLD}OPTIONS${RESET}
@@ -739,6 +1067,14 @@ ${BOLD}OPTIONS${RESET}
   ${YELLOW}--full${RESET}            print full JSON response after the human-readable summary
   ${YELLOW}--no-color${RESET}        disable ANSI color output (also honoured via NO_COLOR env var)
   ${YELLOW}--poll <n>${RESET}        (status) re-poll every N seconds; keeps the socket open
+  ${YELLOW}--limit <n>${RESET}       (hooks log) page size (default: 20)
+  ${YELLOW}--offset <n>${RESET}      (hooks log) row offset (default: 0)
+  ${YELLOW}--keywords <csv>${RESET}  (hooks add/update) comma-separated keywords
+  ${YELLOW}--scenario <s>${RESET}    (hooks add/update) any | cognitive | emotional | physical
+  ${YELLOW}--command <cmd>${RESET}   (hooks add/update) command to run on trigger
+  ${YELLOW}--hook-text <txt>${RESET} (hooks add/update) payload text
+  ${YELLOW}--threshold <f>${RESET}   (hooks add/update) distance threshold (0.01–1.0)
+  ${YELLOW}--recent <n>${RESET}      (hooks add/update) recent-refs limit (10–20)
   ${YELLOW}--trends${RESET}          (sessions) show per-session metric trends and first/second-half deltas
   ${YELLOW}--context "..."${RESET}   (label) long-form annotation body; used by search-labels --mode context
   ${YELLOW}--at <utc>${RESET}        (label) backdate to a specific unix second (default: now)
@@ -749,10 +1085,24 @@ ${BOLD}OPTIONS${RESET}
   ${YELLOW}--k-eeg <n>${RESET}       (interactive) k for EEG-similarity HNSW search (default: 5)
   ${YELLOW}--k-labels <n>${RESET}    (interactive) k for label-proximity step (default: 3)
   ${YELLOW}--reach <n>${RESET}       (interactive) temporal window in minutes around each EEG point (default: 10)
+  ${YELLOW}--by-image <path>${RESET} search-images: search by visual similarity (CLIP) instead of OCR text
+  ${YELLOW}--window <n>${RESET}      (screenshots-for-eeg / eeg-for-screenshots) temporal window in seconds (default 30/60)
   ${YELLOW}--voice <name>${RESET}    say: voice name to use (e.g. ${GREEN}Jasper${RESET}); omit to use the server default
   ${YELLOW}--profile <p>${RESET}     calibrate: profile name or UUID to run (default: active profile)
+  ${YELLOW}--actions "L:s,…"${RESET} (calibrations create/update) actions as "Label:secs" pairs (e.g. ${GREEN}"Eyes Open:20,Eyes Closed:20"${RESET})
+  ${YELLOW}--loops <n>${RESET}       (calibrations create/update) loop count (default: 3)
+  ${YELLOW}--break <n>${RESET}       (calibrations create/update) break duration in seconds (default: 5)
+  ${YELLOW}--auto-start${RESET}     (calibrations create/update) auto-start when opened
+  ${YELLOW}--name "…"${RESET}       (calibrations update) rename the profile
+  ${YELLOW}--mmproj <file>${RESET}    llm add: also download a vision projector from the same repo
+  ${YELLOW}--image <path>${RESET}     llm chat: attach an image (can be repeated: --image a.jpg --image b.png)
+  ${YELLOW}--system "..."${RESET}    llm chat: prepend a system prompt (e.g. ${GREEN}"You are a concise EEG assistant."${RESET})
+  ${YELLOW}--temperature <f>${RESET} llm chat: sampling temperature 0–2 (default 0.8; 0 = deterministic)
+  ${YELLOW}--max-tokens <n>${RESET}  llm chat: maximum tokens to generate per turn (default 2048)
   ${YELLOW}--help${RESET}            show this help
   ${YELLOW}--version${RESET}         print CLI version and exit
+
+  ${YELLOW}--metric-type <t>${RESET} (health metrics) metric type (e.g. ${GREEN}restingHeartRate${RESET}, ${GREEN}hrv${RESET}, ${GREEN}vo2Max${RESET})
 
 ${BOLD}EXAMPLES${RESET}
   When parameters are omitted, the CLI auto-selects ranges from your session
@@ -824,6 +1174,14 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#   2      Relaxation                     3        1${RESET}
   ${DIM}#   3      Focus Baseline                 5        1${RESET}
 
+  ${BOLD}calibrations create/update/delete${RESET} — full calibration profile CRUD
+  ${DIM}$${RESET} npx neuroskill calibrations create "My Protocol" --actions "Eyes Open:20,Eyes Closed:20" --loops 3 --break 5
+  ${DIM}$${RESET} npx neuroskill calibrations create "Quick Baseline" --actions "Relax:30,Focus:30" --auto-start
+  ${DIM}$${RESET} npx neuroskill calibrations update "My Protocol" --loops 5 --break 10
+  ${DIM}$${RESET} npx neuroskill calibrations update "My Protocol" --name "Renamed Protocol"
+  ${DIM}$${RESET} npx neuroskill calibrations update "My Protocol" --actions "Eyes Open:30,Eyes Closed:30,Breathe:15"
+  ${DIM}$${RESET} npx neuroskill calibrations delete "My Protocol"
+
   ${BOLD}calibrate${RESET} — open calibration window and start immediately
   ${DIM}$${RESET} npx neuroskill calibrate                              ${DIM}# uses active profile${RESET}
   ${DIM}$${RESET} npx neuroskill calibrate --profile "Eyes Open/Closed" ${DIM}# by name${RESET}
@@ -857,6 +1215,80 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#         "created_at": 1740412810, "eeg_metrics": { "focus": 0.74, ... } },${RESET}
   ${DIM}#       ...${RESET}
   ${DIM}#     ] }${RESET}
+
+  ${BOLD}search-images${RESET} — search screenshots by OCR text (semantic or substring)
+  ${DIM}$${RESET} npx neuroskill search-images "compiler error"
+  ${DIM}$${RESET} npx neuroskill search-images "login page" --k 5
+  ${DIM}$${RESET} npx neuroskill search-images "TODO" --mode substring
+  ${DIM}$${RESET} npx neuroskill search-images "dashboard" --json | jq '.results[].filename'
+  ${DIM}# Output:${RESET}
+  ${DIM}#   ⚡ search-images "compiler error"  (mode: semantic, k: 20)${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#   mode:    semantic${RESET}
+  ${DIM}#   k:       20   results: 3${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#   20260315/20260315143025.webp${RESET}
+  ${DIM}#      time:       3/15/2026, 2:30:25 PM${RESET}
+  ${DIM}#      app:        VS Code  window: skill — cli.ts${RESET}
+  ${DIM}#      similarity: 87%${RESET}
+  ${DIM}#      ocr:        error[E0308]: mismatched types expected…${RESET}
+
+  ${BOLD}search-images --by-image${RESET} — search screenshots by visual similarity (CLIP)
+  ${DIM}$${RESET} npx neuroskill search-images --by-image screenshot.png
+  ${DIM}$${RESET} npx neuroskill search-images --by-image photo.jpg --k 5
+  ${DIM}$${RESET} npx neuroskill search-images --by-image ref.webp --json | jq '.results[].filename'
+  ${DIM}# Output:${RESET}
+  ${DIM}#   ⚡ search-images  (mode: vision, k: 20)${RESET}
+  ${DIM}#     image: screenshot.png${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#   mode:    vision (CLIP)${RESET}
+  ${DIM}#   k:       20   results: 5${RESET}
+
+  ${BOLD}screenshots-for-eeg${RESET} — find screenshots captured during an EEG session
+  ${DIM}$${RESET} npx neuroskill screenshots-for-eeg                     ${DIM}# auto: last session${RESET}
+  ${DIM}$${RESET} npx neuroskill screenshots-for-eeg --start 1740412800 --end 1740415500
+  ${DIM}$${RESET} npx neuroskill screenshots-for-eeg --window 60         ${DIM}# ±60s around each EEG epoch${RESET}
+  ${DIM}$${RESET} npx neuroskill screenshots-for-eeg --json | jq '.results[].screenshot.filename'
+  ${DIM}# Output:${RESET}
+  ${DIM}#   ⚡ screenshots-for-eeg${RESET}
+  ${DIM}#     range: 1740412800–1740415500 (auto: 2/24/2026 8:00 AM → 8:45 AM)${RESET}
+  ${DIM}#     window: ±30s   limit: 50${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     EEG epochs scanned: 541${RESET}
+  ${DIM}#     screenshots found:  12${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     20260224/20260224080530.webp${RESET}
+  ${DIM}#        EEG at:     2/24/2026, 8:05:30 AM${RESET}
+  ${DIM}#        screenshot: 2/24/2026, 8:05:28 AM   app: VS Code  window: main.rs${RESET}
+
+  ${BOLD}eeg-for-screenshots${RESET} — find EEG data & labels near screenshots matching OCR text
+  ${DIM}$${RESET} npx neuroskill eeg-for-screenshots "compiler error"
+  ${DIM}$${RESET} npx neuroskill eeg-for-screenshots "TODO" --mode substring --k 5
+  ${DIM}$${RESET} npx neuroskill eeg-for-screenshots "dashboard" --window 120
+  ${DIM}$${RESET} npx neuroskill eeg-for-screenshots "login page" --json | jq '.results[].labels[].text'
+  ${DIM}# Output:${RESET}
+  ${DIM}#   ⚡ eeg-for-screenshots "compiler error"  (mode: semantic, k: 10, window: ±60s)${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     screenshots matched: 3${RESET}
+  ${DIM}#     results with EEG:    3${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     20260315/20260315143025.webp${RESET}
+  ${DIM}#        time:       3/15/2026, 2:30:25 PM   app: VS Code  window: skill — cli.ts${RESET}
+  ${DIM}#        similarity: 87%${RESET}
+  ${DIM}#        EEG session: 3/15/2026, 2:00:00 PM → 3:00:00 PM  (1h 0m)  device: Muse-A1B2${RESET}
+  ${DIM}#        labels (2):${RESET}
+  ${DIM}#          "debugging session"  3/15/2026, 2:28:00 PM  id: 47${RESET}
+  ${DIM}#          "frustrated"         3/15/2026, 2:31:00 PM  id: 48${RESET}
+
+  ${BOLD}screenshots-around${RESET} — find screenshots near a timestamp
+  ${DIM}$${RESET} npx neuroskill screenshots-around --at 1740412800
+  ${DIM}$${RESET} npx neuroskill screenshots-around --at 1740412800 --seconds 120
+  ${DIM}$${RESET} npx neuroskill screenshots-around --at 1740412800 --json | jq '.results | length'
+  ${DIM}# Output:${RESET}
+  ${DIM}#   ⚡ screenshots-around  (timestamp: 1740412800, window: ±60s)${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#   around:  2/24/2026, 8:00:00 AM${RESET}
+  ${DIM}#   window:  ±60s   results: 4${RESET}
 
   ${BOLD}interactive${RESET} — cross-modal graph search: query → text labels → EEG moments → nearby labels
   ${DIM}$${RESET} npx neuroskill interactive "deep focus"
@@ -933,6 +1365,53 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#     N3    298  (28.3%)${RESET}
   ${DIM}#     REM   112  (10.6%)${RESET}
 
+  ${BOLD}sleep-schedule${RESET} — view or update your sleep schedule
+  ${DIM}$${RESET} npx neuroskill sleep-schedule                     ${DIM}# show current schedule${RESET}
+  ${DIM}$${RESET} npx neuroskill sleep-schedule --json
+  ${DIM}$${RESET} npx neuroskill sleep-schedule set --bedtime 23:00 --wake 07:00
+  ${DIM}$${RESET} npx neuroskill sleep-schedule set --preset early_bird
+  ${DIM}$${RESET} npx neuroskill sleep-schedule set --bedtime 01:00 --wake 09:00 --preset custom
+  ${DIM}# Output:${RESET}
+  ${DIM}#   ⚡ sleep-schedule  current schedule${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     Sleep Schedule${RESET}
+  ${DIM}#       bedtime    23:00${RESET}
+  ${DIM}#       wake       07:00${RESET}
+  ${DIM}#       duration   8h  (480 min)${RESET}
+  ${DIM}#       preset     default${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     Available presets:${RESET}
+  ${DIM}#       ● default           23:00 — 07:00  (8h)${RESET}
+  ${DIM}#       ○ early_bird        21:30 — 05:30  (8h)${RESET}
+  ${DIM}#       ○ night_owl         01:00 — 09:00  (8h)${RESET}
+  ${DIM}#       ○ short_sleeper     00:00 — 06:00  (6h)${RESET}
+  ${DIM}#       ○ long_sleeper      22:00 — 08:00  (10h)${RESET}
+
+  ${BOLD}health${RESET} — Apple HealthKit data (synced from iOS companion)
+  ${DIM}$${RESET} npx neuroskill health                              ${DIM}# summary: last 24h counts${RESET}
+  ${DIM}$${RESET} npx neuroskill health --json
+  ${DIM}$${RESET} npx neuroskill health summary --start 1740000000 --end 1740086400
+  ${DIM}$${RESET} npx neuroskill health sleep                        ${DIM}# sleep samples${RESET}
+  ${DIM}$${RESET} npx neuroskill health sleep --json | jq '.results[] | {stage: .value, start: .start_utc}'
+  ${DIM}$${RESET} npx neuroskill health workouts                     ${DIM}# workout sessions${RESET}
+  ${DIM}$${RESET} npx neuroskill health workouts --json | jq '.results[] | {type: .workout_type, cal: .active_calories}'
+  ${DIM}$${RESET} npx neuroskill health hr --limit 20                ${DIM}# heart rate samples${RESET}
+  ${DIM}$${RESET} npx neuroskill health steps                        ${DIM}# step counts${RESET}
+  ${DIM}$${RESET} npx neuroskill health metrics --metric-type restingHeartRate
+  ${DIM}$${RESET} npx neuroskill health metrics --metric-type hrv --json | jq '.results[].value'
+  ${DIM}$${RESET} npx neuroskill health metric-types                 ${DIM}# list all metric types${RESET}
+  ${DIM}$${RESET} npx neuroskill health sync '{"steps":[{"start_utc":1740000000,"end_utc":1740086400,"count":9500}]}'
+  ${DIM}# Output (summary):${RESET}
+  ${DIM}#   ⚡ health  last 24h${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#     Apple Health Summary${RESET}
+  ${DIM}#       sleep samples    12${RESET}
+  ${DIM}#       workouts          2${RESET}
+  ${DIM}#       heart rate      148${RESET}
+  ${DIM}#       total steps    9500${RESET}
+  ${DIM}#       mindfulness       1${RESET}
+  ${DIM}#       metrics          24${RESET}
+
   ${BOLD}umap${RESET} — 3D UMAP projection with progress (auto: last 2 sessions)
   ${DIM}$${RESET} npx neuroskill umap                                ${DIM}# auto: last 2 sessions${RESET}
   ${DIM}$${RESET} npx neuroskill umap --a-start 1740380100 --a-end 1740382665 --b-start 1740412800 --b-end 1740415510
@@ -950,6 +1429,19 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#     "points": [{ "x": 1.23, "y": -0.45, "z": 2.01, "session": "A", "utc": 1740380105 }, ...],${RESET}
   ${DIM}#     "n_a": 513, "n_b": 541, "dim": 3, "elapsed_ms": 8432 } }${RESET}
 
+  ${BOLD}dnd${RESET} — Do Not Disturb automation status and control
+  ${DIM}$${RESET} npx neuroskill dnd                                 ${DIM}# show config + live eligibility state${RESET}
+  ${DIM}$${RESET} npx neuroskill dnd on                              ${DIM}# force-enable DND (bypass EEG threshold)${RESET}
+  ${DIM}$${RESET} npx neuroskill dnd off                             ${DIM}# force-disable DND${RESET}
+  ${DIM}$${RESET} npx neuroskill dnd --json                          ${DIM}# raw JSON (pipe to jq)${RESET}
+  ${DIM}# Output (dnd):${RESET}
+  ${DIM}#   DND automation  enabled=false  threshold=60  duration=60s${RESET}
+  ${DIM}#   focus timer     elapsed=0s / 60s required${RESET}
+  ${DIM}#   app active      false${RESET}
+  ${DIM}#   OS active       false  (macOS Assertions.json)${RESET}
+  ${DIM}# Output (dnd on):${RESET}
+  ${DIM}#   DND activated  ok=true${RESET}
+
   ${BOLD}listen${RESET} — stream live broadcast events
   ${DIM}$${RESET} npx neuroskill listen                              ${DIM}# 5 seconds${RESET}
   ${DIM}$${RESET} npx neuroskill listen --seconds 30
@@ -960,6 +1452,40 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#     ppg ×12${RESET}
   ${DIM}#     scores ×5${RESET}
   ${DIM}#   [{ "event": "eeg", "electrode": 0, "samples": [...], "timestamp": 1740412800.5 }, ...]${RESET}
+
+  ${BOLD}llm${RESET} — LLM inference server management + chat
+  ${DIM}$${RESET} npx neuroskill llm status
+  ${DIM}$${RESET} npx neuroskill llm start           ${DIM}# load active model (may take seconds)${RESET}
+  ${DIM}$${RESET} npx neuroskill llm stop
+  ${DIM}$${RESET} npx neuroskill llm catalog
+  ${DIM}$${RESET} npx neuroskill llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf
+  ${DIM}$${RESET} npx neuroskill llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf --mmproj mmproj-Phi-4-mini-reasoning-BF16.gguf
+  ${DIM}$${RESET} npx neuroskill llm add https://huggingface.co/bartowski/Phi-4-mini-reasoning-GGUF/blob/main/Phi-4-mini-reasoning-Q4_K_M.gguf
+  ${DIM}$${RESET} npx neuroskill llm select "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+  ${DIM}$${RESET} npx neuroskill llm mmproj "mmproj-Qwen_Qwen3.5-4B-BF16.gguf"
+  ${DIM}$${RESET} npx neuroskill llm mmproj none     ${DIM}# disable vision projector${RESET}
+  ${DIM}$${RESET} npx neuroskill llm autoload-mmproj on
+  ${DIM}$${RESET} npx neuroskill llm download "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+  ${DIM}$${RESET} npx neuroskill llm pause "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+  ${DIM}$${RESET} npx neuroskill llm resume "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
+  ${DIM}$${RESET} npx neuroskill llm downloads       ${DIM}# list all downloads with progress${RESET}
+  ${DIM}$${RESET} npx neuroskill llm refresh          ${DIM}# re-probe HF cache${RESET}
+  ${DIM}$${RESET} npx neuroskill llm fit              ${DIM}# hardware fit for all models${RESET}
+  ${DIM}$${RESET} npx neuroskill llm logs
+  ${DIM}$${RESET} npx neuroskill llm chat             ${DIM}# interactive REPL (multi-turn, type 'exit' to quit)${RESET}
+  ${DIM}$${RESET} npx neuroskill llm chat "What EEG band is linked to relaxation?"
+  ${DIM}$${RESET} npx neuroskill llm chat --system "You are a concise neuroscience assistant."
+  ${DIM}$${RESET} npx neuroskill llm chat "Explain delta waves" --temperature 0.3 --max-tokens 256
+  ${DIM}$${RESET} npx neuroskill llm chat "What's in this image?" --image eeg_plot.png
+  ${DIM}$${RESET} npx neuroskill llm chat "Compare these" --image a.jpg --image b.jpg
+  ${DIM}$${RESET} npx neuroskill llm chat "Describe" --image scan.png --http   ${DIM}# HTTP non-streaming${RESET}
+  ${DIM}# Interactive REPL commands:${RESET}
+  ${DIM}#   /image <path> — stage an image for the next message${RESET}
+  ${DIM}#   /images       — show staged image count${RESET}
+  ${DIM}#   /clear        — clear conversation history (keep system prompt)${RESET}
+  ${DIM}#   /history      — show all messages in the current conversation${RESET}
+  ${DIM}#   /help         — show REPL help${RESET}
+  ${DIM}#   exit          — end the session${RESET}
 
   ${BOLD}raw${RESET} — send arbitrary JSON
   ${DIM}$${RESET} npx neuroskill raw '{"command":"status"}'
@@ -1192,8 +1718,13 @@ async function cmdStatus(args: Args): Promise<void> {
         v != null ? `${DIM}${label}:${RESET} ${qColor(v)}${(v * 100).toFixed(0)}%${RESET}` : "";
       print("");
       print(`  ${BOLD}Signal Quality${RESET}`);
-      print(`  ${[qFmt("tp9", q.tp9), qFmt("af7", q.af7), qFmt("af8", q.af8), qFmt("tp10", q.tp10)]
-               .filter(Boolean).join("   ")}`);
+      // Dynamically render all channel quality keys (works for Muse 4ch, Hermes 8ch, MW75 12ch)
+      const channelKeys = Object.keys(q).filter(k => typeof q[k] === "number");
+      const cols = Math.min(channelKeys.length, 4);
+      for (let i = 0; i < channelKeys.length; i += cols) {
+        const row = channelKeys.slice(i, i + cols).map(k => qFmt(k, q[k])).filter(Boolean);
+        if (row.length > 0) print(`  ${row.join("   ")}`);
+      }
     }
 
     // ── Scores ───────────────────────────────────────────────────────────
@@ -1379,6 +1910,28 @@ async function cmdStatus(args: Args): Promise<void> {
           const allLabels = itemsRaw.map(nameOf);
           print(`  ${DIM}labels:${RESET} ${allLabels.map(n => `${CYAN}${n}${RESET}`).join(`${DIM} → ${RESET}`)}`);
         }
+      }
+    }
+
+    // ── Hooks ─────────────────────────────────────────────────────────────
+    if (r.hooks && typeof r.hooks === "object") {
+      const h = r.hooks;
+      print("");
+      print(`  ${BOLD}Hooks${RESET}  ${DIM}(${h.total ?? 0} total, ${h.enabled ?? 0} enabled)${RESET}`);
+
+      const lt = h.latest_trigger;
+      if (lt && lt.triggered_at_utc) {
+        const when = fmtTs(lt.triggered_at_utc);
+        const ago  = Math.floor(Date.now() / 1000) - lt.triggered_at_utc;
+        const agoStr = fmtDur(ago);
+        const distStr = typeof lt.distance === "number" ? lt.distance.toFixed(4) : "?";
+        const distColor = typeof lt.distance === "number" && lt.distance < 0.1 ? GREEN : CYAN;
+        print(`  ${DIM}latest:${RESET} ${YELLOW}${lt.hook}${RESET}  ${DIM}${when}${RESET}  ${DIM}(${agoStr} ago)${RESET}`);
+        print(`  ${DIM}  dist:${RESET} ${distColor}${distStr}${RESET}`
+          + (lt.label_text ? `  ${DIM}label:${RESET} ${GREEN}"${lt.label_text}"${RESET}` : "")
+          + (lt.label_id   != null ? `  ${DIM}id:${RESET} ${CYAN}${lt.label_id}${RESET}` : ""));
+      } else {
+        print(`  ${DIM}latest: never triggered${RESET}`);
       }
     }
 
@@ -1715,6 +2268,31 @@ async function cmdSessions(args: Args): Promise<void> {
 }
 
 /**
+ * `notify` — Send a native OS notification through the Skill app.
+ *
+ * Sends `{ command: "notify", title, body? }`.  The server fires a
+ * platform notification via `tauri-plugin-notification`.  Useful for
+ * triggering alerts from scripts or automation pipelines.
+ *
+ * Response: `{ ok: true }`.
+ *
+ * **HTTP equivalent** — `POST /` with `Content-Type: application/json`:
+ * ```sh
+ * # Title only:
+ * curl -s -X POST http://127.0.0.1:8375/ \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"command":"notify","title":"Session done"}'
+ *
+ * # Title + body:
+ * curl -s -X POST http://127.0.0.1:8375/ \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"command":"notify","title":"Focus done","body":"Take a 5-minute break"}'
+ * ```
+ *
+ * @param title - Notification title (required).
+ * @param body  - Notification body text (optional).
+ */
+/**
  * `say` — Speak text aloud via the on-device KittenTTS engine (fire-and-forget).
  *
  * Sends `{ command: "say", text: "..." }`.  The server enqueues the utterance
@@ -1762,60 +2340,75 @@ async function cmdSay(text: string, voice?: string): Promise<void> {
   printResult(r);
 }
 
-/**
- * `notify` — Send a native OS notification through the Skill app.
- *
- * Sends `{ command: "notify", title, body? }`.  The server fires a
- * platform notification via `tauri-plugin-notification`.  Useful for
- * triggering alerts from scripts or automation pipelines.
- *
- * Response: `{ ok: true }`.
- *
- * **HTTP equivalent** — `POST /` with `Content-Type: application/json`:
- * ```sh
- * # Title only:
- * curl -s -X POST http://127.0.0.1:8375/ \
- *   -H "Content-Type: application/json" \
- *   -d '{"command":"notify","title":"Session done"}'
- *
- * # Title + body:
- * curl -s -X POST http://127.0.0.1:8375/ \
- *   -H "Content-Type: application/json" \
- *   -d '{"command":"notify","title":"Focus done","body":"Take a 5-minute break"}'
- * ```
- *
- * @param title - Notification title (required).
- * @param body  - Notification body text (optional).
- */
 async function cmdNotify(title: string, body?: string): Promise<void> {
   print(`${BOLD}⚡ notify${RESET} ${GREEN}"${title}"${RESET}${body ? ` ${DIM}"${body}"${RESET}` : ""}`);
   const cmd: { command: string; title: string; body?: string } = { command: "notify", title };
   if (body) cmd.body = body;
-  const r = await send(cmd);
+  const r = await send(cmd as { command: string; [k: string]: unknown });
   if (!r.ok) printError(`server returned ok=false: ${r.error}`);
   printResult(r);
 }
 
 /**
- * `calibrations` — List or inspect calibration profiles stored on the server.
+ * `calibrations` — Full CRUD for calibration profiles.
  *
  * Subcommands:
- * - `calibrations` / `calibrations list` — fetch all profiles via
- *   `{ command: "list_calibrations" }` and display them as a formatted table.
- * - `calibrations get <id>` — fetch a single profile by numeric ID via
- *   `{ command: "get_calibration", id }` and print the full detail.
+ * - `calibrations` / `calibrations list` — list all profiles.
+ * - `calibrations get <id>` — inspect a single profile.
+ * - `calibrations create "name" --actions "L1:20,L2:20"` — create a new profile.
+ * - `calibrations update <id-or-name> [--name/--actions/--loops/--break/--auto-start]` — update.
+ * - `calibrations delete <id-or-name>` — remove a profile.
  *
- * **HTTP equivalent:**
- * ```sh
- * # List all profiles:
- * curl -s http://127.0.0.1:8375/calibrations
- *
- * # Get a specific profile by ID:
- * curl -s http://127.0.0.1:8375/calibrations/3
- * ```
- *
- * @param args - Parsed CLI arguments (`subAction`, `id`).
+ * @param args - Parsed CLI arguments.
  */
+/**
+ * Parse a compact actions string into an array of `{ label, duration_secs }`.
+ *
+ * Format: `"Eyes Open:20,Eyes Closed:20"` → `[{ label: "Eyes Open", duration_secs: 20 }, ...]`
+ *
+ * If no colon is present in an entry, defaults to 20 seconds.
+ */
+function parseCalActions(raw: string): Array<{ label: string; duration_secs: number }> {
+  return raw.split(",")
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(s => {
+      const colonIdx = s.lastIndexOf(":");
+      if (colonIdx > 0) {
+        const label = s.slice(0, colonIdx).trim();
+        const dur   = Number(s.slice(colonIdx + 1).trim());
+        return { label, duration_secs: isNaN(dur) || dur <= 0 ? 20 : dur };
+      }
+      return { label: s, duration_secs: 20 };
+    });
+}
+
+/**
+ * Resolve a profile identifier (UUID or name substring) to a UUID.
+ *
+ * Fetches the profile list from the server and matches:
+ * 1. Exact UUID match.
+ * 2. Case-insensitive name substring match.
+ *
+ * Exits with an error if no match is found.
+ */
+async function resolveProfileId(idOrName: string): Promise<string> {
+  const lr = await send({ command: "list_calibrations" });
+  if (!lr.ok) printError(`could not list profiles: ${lr.error}`);
+  const profiles = (lr.profiles ?? []) as Array<{ id: string; name: string }>;
+  if (profiles.length === 0) printError("no calibration profiles found");
+
+  const exact  = profiles.find(p => p.id === idOrName);
+  const byName = profiles.find(p => p.name.toLowerCase().includes(idOrName.toLowerCase()));
+  const match  = exact ?? byName;
+
+  if (!match) {
+    const names = profiles.map(p => `"${p.name}" (${p.id})`).join("\n    ");
+    printError(`profile "${idOrName}" not found.\n  Available profiles:\n    ${names}`);
+  }
+  return match!.id;
+}
+
 async function cmdCalibrations(args: Args): Promise<void> {
   const sub = args.subAction ?? "list";
 
@@ -1840,6 +2433,83 @@ async function cmdCalibrations(args: Args): Promise<void> {
       }
       print("");
     }
+    printResult(r);
+    return;
+  }
+
+  // ── create ─────────────────────────────────────────────────────────────
+  if (sub === "create") {
+    if (!args.calName) printError('usage: calibrations create "Profile Name" --actions "Eyes Open:20,Eyes Closed:20" [--loops 3] [--break 5] [--auto-start]');
+    if (!args.calActions) printError("--actions is required for create. Format: \"Label1:secs,Label2:secs\" (e.g. \"Eyes Open:20,Eyes Closed:20\")");
+
+    const actions = parseCalActions(args.calActions!);
+    if (actions.length === 0) printError("--actions must contain at least one label:duration pair");
+
+    print(`${BOLD}⚡ calibrations create${RESET} ${GREEN}"${args.calName}"${RESET}`);
+
+    const cmd: Record<string, unknown> = {
+      command: "create_calibration",
+      name:    args.calName,
+      actions,
+    };
+    if (args.calLoops != null)     cmd.loop_count          = args.calLoops;
+    if (args.calBreak != null)     cmd.break_duration_secs = args.calBreak;
+    if (args.calAutoStart != null) cmd.auto_start          = args.calAutoStart;
+
+    const r = await send(cmd as { command: string; [k: string]: unknown });
+    if (!r.ok) printError(`create failed: ${r.error}`);
+
+    if (!jsonMode && r.profile) {
+      const p = r.profile;
+      print(`  ${GREEN}✓${RESET} created ${CYAN}${p.name}${RESET}  ${DIM}id: ${p.id}${RESET}`);
+      print(`  ${DIM}actions:${RESET} ${actions.map((a: any) => `${CYAN}${a.label}${RESET} ${DIM}(${a.duration_secs}s)${RESET}`).join(`${DIM} → ${RESET}`)}`);
+      print(`  ${DIM}loops:${RESET} ${CYAN}${p.loop_count}${RESET}  ${DIM}break:${RESET} ${CYAN}${p.break_duration_secs}s${RESET}  ${DIM}auto-start:${RESET} ${CYAN}${p.auto_start}${RESET}`);
+    }
+    printResult(r);
+    return;
+  }
+
+  // ── update ─────────────────────────────────────────────────────────────
+  if (sub === "update") {
+    if (!args.profileId) printError("usage: calibrations update <id-or-name> [--name ...] [--actions ...] [--loops N] [--break N] [--auto-start]");
+
+    const profileUuid = await resolveProfileId(args.profileId);
+
+    print(`${BOLD}⚡ calibrations update${RESET} ${CYAN}${args.profileId}${RESET}`);
+
+    const cmd: Record<string, unknown> = {
+      command: "update_calibration",
+      id:      profileUuid,
+    };
+    if (args.calName    != null) cmd.name                = args.calName;
+    if (args.calActions != null) cmd.actions             = parseCalActions(args.calActions);
+    if (args.calLoops   != null) cmd.loop_count          = args.calLoops;
+    if (args.calBreak   != null) cmd.break_duration_secs = args.calBreak;
+    if (args.calAutoStart != null) cmd.auto_start        = args.calAutoStart;
+
+    const r = await send(cmd as { command: string; [k: string]: unknown });
+    if (!r.ok) printError(`update failed: ${r.error}`);
+
+    if (!jsonMode && r.profile) {
+      const p = r.profile;
+      print(`  ${GREEN}✓${RESET} updated ${CYAN}${p.name}${RESET}  ${DIM}id: ${p.id}${RESET}`);
+    }
+    printResult(r);
+    return;
+  }
+
+  // ── delete ─────────────────────────────────────────────────────────────
+  if (sub === "delete") {
+    if (!args.profileId) printError("usage: calibrations delete <id-or-name>");
+
+    const profileUuid = await resolveProfileId(args.profileId);
+
+    print(`${BOLD}⚡ calibrations delete${RESET} ${CYAN}${args.profileId}${RESET}`);
+
+    const r = await send({ command: "delete_calibration", id: profileUuid });
+    if (!r.ok) printError(`delete failed: ${r.error}`);
+
+    print(`  ${GREEN}✓${RESET} deleted`);
     printResult(r);
     return;
   }
@@ -2112,6 +2782,391 @@ async function cmdSearchLabels(args: Args): Promise<void> {
             .map(k => `${k}=${CYAN}${(m[k] as number).toFixed(2)}${RESET}`)
             .join("  ");
           if (metricStr) print(`     ${DIM}eeg:${RESET}       ${metricStr}`);
+        }
+        print("");
+      }
+    }
+  }
+
+  printResult(r);
+}
+
+/**
+ * `search-images "query"` — Search screenshots by OCR text.
+ *
+ * Delegates to the server `search_screenshots` command which supports two
+ * modes:
+ * - **semantic** (default): embeds the query text and searches the OCR HNSW
+ *   index for visually/semantically similar on-screen text.
+ * - **substring**: SQL LIKE matching against raw OCR text.
+ *
+ * Each result includes: timestamp, filename, app_name, window_title,
+ * ocr_text, and similarity score (for semantic mode).
+ *
+ * Screenshot images can be viewed at:
+ *   `http://127.0.0.1:<port>/screenshots/<filename>`
+ *
+ * **HTTP / WS equivalent**:
+ * ```sh
+ * curl -s -X POST http://127.0.0.1:8375/ \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"command":"search_screenshots","query":"my text","k":20,"mode":"semantic"}'
+ * ```
+ *
+ * @param args - Parsed CLI arguments. `text` is the query string (required).
+ */
+async function cmdSearchImages(args: Args): Promise<void> {
+  // ── Vision search mode (--by-image) ─────────────────────────────────────
+  if (args.byImage) {
+    const k = args.k ?? 20;
+    print(`${BOLD}⚡ search-images${RESET} ${DIM}(mode: vision, k: ${k})${RESET}`);
+    print(`  ${DIM}image:${RESET} ${CYAN}${args.byImage}${RESET}`);
+
+    // Read image, embed via fastembed CLIP → send vector to server
+    let data: Buffer;
+    try { data = readFileSync(args.byImage); }
+    catch (e: any) { printError(`cannot read image file "${args.byImage}": ${e.message}`); }
+
+    // Base64-encode and send to the server for embedding + search
+    const b64 = data!.toString("base64");
+    const r = await send({
+      command: "search_screenshots_by_image_b64",
+      image_b64: b64,
+      k,
+    }, 60000);
+
+    // If the dedicated b64 command isn't available, fall back to search_screenshots_vision
+    // with a client-side note — the server may not have this endpoint yet.
+    if (r.error && r.error.includes("unknown command")) {
+      printError(
+        "server does not support image-based screenshot search over WebSocket.\n" +
+        "  Update the Skill app to the latest version for --by-image support."
+      );
+    }
+    if (!r.ok && r.error) printError(`server returned ok=false: ${r.error}`);
+
+    if (!jsonMode) {
+      const results = (r.results ?? []) as Array<{
+        timestamp: number; unix_ts: number; filename: string;
+        app_name: string; window_title: string; ocr_text: string;
+        similarity: number;
+      }>;
+
+      print(`\n  ${DIM}mode:${RESET}    ${CYAN}vision (CLIP)${RESET}`);
+      print(`  ${DIM}k:${RESET}       ${CYAN}${r.k ?? k}${RESET}   ${DIM}results:${RESET} ${GREEN}${r.count ?? results.length}${RESET}\n`);
+      printScreenshotResults(results, "vision");
+    }
+    printResult(r);
+    return;
+  }
+
+  // ── OCR text search modes ───────────────────────────────────────────────
+  if (!args.text) printError('usage: npx neuroskill search-images "your query text" [--mode semantic|substring] [--by-image <path>]');
+  const query = args.text!;
+  const k     = args.k    ?? 20;
+  const mode  = args.mode ?? "semantic";
+
+  const validModes = ["semantic", "substring"];
+  if (!validModes.includes(mode)) {
+    printError(`invalid --mode "${mode}": must be one of ${validModes.join(", ")}`);
+  }
+
+  print(`${BOLD}⚡ search-images${RESET} ${GREEN}"${query}"${RESET}  ${DIM}(mode: ${mode}, k: ${k})${RESET}`);
+
+  const r = await send({ command: "search_screenshots", query, k, mode }, 30000);
+  if (!r.ok && r.error) printError(`server returned ok=false: ${r.error}`);
+
+  if (!jsonMode) {
+    const results = (r.results ?? []) as Array<{
+      timestamp: number; unix_ts: number; filename: string;
+      app_name: string; window_title: string; ocr_text: string;
+      similarity: number;
+    }>;
+
+    print(`\n  ${DIM}mode:${RESET}    ${CYAN}${r.mode ?? mode}${RESET}`);
+    print(`  ${DIM}k:${RESET}       ${CYAN}${r.k ?? k}${RESET}   ${DIM}results:${RESET} ${GREEN}${r.count ?? results.length}${RESET}\n`);
+    printScreenshotResults(results, mode);
+  }
+
+  printResult(r);
+}
+
+/**
+ * Shared renderer for screenshot search results (used by search-images,
+ * screenshots-for-eeg, eeg-for-screenshots).
+ */
+function printScreenshotResults(
+  results: Array<{
+    timestamp: number; unix_ts: number; filename: string;
+    app_name: string; window_title: string; ocr_text: string;
+    similarity: number;
+  }>,
+  mode: string,
+): void {
+  if (results.length === 0) {
+    print(`  ${DIM}no results — screenshots may not be captured or indexed yet${RESET}`);
+    print(`  ${DIM}(check Settings → Screenshots to enable capture)${RESET}`);
+    return;
+  }
+
+  for (const hit of results) {
+    const simPct  = ((hit.similarity ?? 0) * 100).toFixed(0);
+    const ts      = fmtTs(hit.unix_ts ?? hit.timestamp);
+    const appName = hit.app_name || "unknown";
+
+    print(`  ${BOLD}${hit.filename}${RESET}`);
+    print(`     ${DIM}time:${RESET}       ${ts}`);
+    print(`     ${DIM}app:${RESET}        ${CYAN}${appName}${RESET}  ${DIM}window:${RESET} ${hit.window_title || "—"}`);
+    if (mode === "semantic" || mode === "vision") {
+      print(`     ${DIM}similarity:${RESET} ${CYAN}${simPct}%${RESET}`);
+    }
+    if (hit.ocr_text) {
+      const preview = hit.ocr_text.length > 120
+        ? hit.ocr_text.slice(0, 120).replace(/\n/g, " ") + "…"
+        : hit.ocr_text.replace(/\n/g, " ");
+      print(`     ${DIM}ocr:${RESET}        ${preview}`);
+    }
+    print("");
+  }
+}
+
+/**
+ * `screenshots-for-eeg` — Find screenshots captured near EEG recording timestamps.
+ *
+ * Given an EEG time range (auto: latest session, or `--start`/`--end`), finds
+ * all EEG embedding timestamps in that range, then returns screenshots within
+ * `--window` seconds (default 30) of each EEG epoch.
+ *
+ * This is the "EEG → screenshots" cross-modal bridge: start from brain data,
+ * discover what was on screen at that moment.
+ *
+ * **WS equivalent**:
+ * ```json
+ * { "command": "screenshots_for_eeg", "start_utc": 1740412800, "end_utc": 1740415500, "window_secs": 30 }
+ * ```
+ */
+async function cmdScreenshotsForEeg(args: Args): Promise<void> {
+  const hasExplicitRange = args.start != null || args.end != null;
+  let start: number, end: number;
+  if (hasExplicitRange) {
+    const now = Math.floor(Date.now() / 1000);
+    start = args.start ?? now - 600;
+    end   = args.end   ?? now;
+  } else {
+    [start, end] = await autoRange(600);
+  }
+  const windowSecs = args.windowSecs ?? 30;
+  const limit      = args.limit ?? 50;
+
+  print(`${BOLD}⚡ screenshots-for-eeg${RESET}`);
+  printRange("range", start, end, !hasExplicitRange);
+  print(`  ${DIM}window:${RESET} ±${CYAN}${windowSecs}s${RESET}  ${DIM}limit:${RESET} ${CYAN}${limit}${RESET}`);
+  if (!hasExplicitRange) printRerun(`screenshots-for-eeg --start ${start} --end ${end} --window ${windowSecs}`);
+
+  const r = await send({
+    command: "screenshots_for_eeg",
+    start_utc: start,
+    end_utc: end,
+    window_secs: windowSecs,
+    limit,
+  }, 30000);
+
+  if (!r.ok && r.error) printError(`server returned ok=false: ${r.error}`);
+
+  if (!jsonMode) {
+    const results = (r.results ?? []) as Array<{
+      eeg_timestamp_utc: number;
+      screenshot: {
+        timestamp: number; unix_ts: number; filename: string;
+        app_name: string; window_title: string; ocr_text: string;
+        similarity: number;
+      };
+    }>;
+
+    print(`\n  ${DIM}EEG epochs scanned:${RESET} ${CYAN}${r.eeg_count ?? 0}${RESET}`);
+    print(`  ${DIM}screenshots found:${RESET}  ${GREEN}${r.count ?? results.length}${RESET}\n`);
+
+    if (results.length === 0) {
+      print(`  ${DIM}no screenshots found near EEG timestamps in this range${RESET}`);
+      print(`  ${DIM}(ensure screenshot capture is enabled in Settings → Screenshots)${RESET}`);
+    } else {
+      for (const hit of results) {
+        const ss      = hit.screenshot;
+        const eegTs   = fmtTs(hit.eeg_timestamp_utc);
+        const ssTs    = fmtTs(ss.unix_ts ?? ss.timestamp);
+        const appName = ss.app_name || "unknown";
+
+        print(`  ${BOLD}${ss.filename}${RESET}`);
+        print(`     ${DIM}EEG at:${RESET}     ${YELLOW}${eegTs}${RESET}`);
+        print(`     ${DIM}screenshot:${RESET} ${ssTs}   ${DIM}app:${RESET} ${CYAN}${appName}${RESET}  ${DIM}window:${RESET} ${ss.window_title || "—"}`);
+        if (ss.ocr_text) {
+          const preview = ss.ocr_text.length > 100
+            ? ss.ocr_text.slice(0, 100).replace(/\n/g, " ") + "…"
+            : ss.ocr_text.replace(/\n/g, " ");
+          print(`     ${DIM}ocr:${RESET}        ${preview}`);
+        }
+        print("");
+      }
+    }
+  }
+
+  printResult(r);
+}
+
+/**
+ * `eeg-for-screenshots "query"` — Find EEG data and labels near screenshots matching OCR text.
+ *
+ * This is the "screenshots → EEG" cross-modal bridge:
+ * 1. Search screenshots by OCR text (semantic or substring).
+ * 2. For each matched screenshot, find EEG labels within `--window` seconds.
+ * 3. Report the associated EEG session and labels alongside each screenshot.
+ *
+ * Use this to answer: "When I was looking at [X], what was my brain doing?"
+ *
+ * **WS equivalent**:
+ * ```json
+ * { "command": "eeg_for_screenshots", "query": "compiler error", "k": 10, "window_secs": 60 }
+ * ```
+ */
+async function cmdEegForScreenshots(args: Args): Promise<void> {
+  if (!args.text) printError('usage: npx neuroskill eeg-for-screenshots "your OCR query"');
+  const query      = args.text!;
+  const k          = args.k ?? 10;
+  const windowSecs = args.windowSecs ?? 60;
+  const mode       = args.mode ?? "semantic";
+
+  print(`${BOLD}⚡ eeg-for-screenshots${RESET} ${GREEN}"${query}"${RESET}  ${DIM}(mode: ${mode}, k: ${k}, window: ±${windowSecs}s)${RESET}`);
+
+  const r = await send({
+    command: "eeg_for_screenshots",
+    query,
+    k,
+    window_secs: windowSecs,
+    mode,
+  }, 30000);
+
+  if (!r.ok && r.error) printError(`server returned ok=false: ${r.error}`);
+
+  if (!jsonMode) {
+    const results = (r.results ?? []) as Array<{
+      screenshot: {
+        timestamp: number; unix_ts: number; filename: string;
+        app_name: string; window_title: string; ocr_text: string;
+        similarity: number;
+      };
+      labels: Array<{
+        id: number; text: string; eeg_start: number; eeg_end: number;
+        label_start: number; label_end: number;
+      }>;
+      session: {
+        csv_path: string; session_start_utc: number; session_end_utc: number;
+        device_name: string;
+      } | null;
+    }>;
+
+    print(`\n  ${DIM}screenshots matched:${RESET} ${GREEN}${r.screenshot_count ?? 0}${RESET}`);
+    print(`  ${DIM}results with EEG:${RESET}   ${CYAN}${r.count ?? results.length}${RESET}\n`);
+
+    if (results.length === 0) {
+      print(`  ${DIM}no results — screenshots may not be captured or OCR-indexed yet${RESET}`);
+    } else {
+      for (const hit of results) {
+        const ss      = hit.screenshot;
+        const ssTs    = fmtTs(ss.unix_ts ?? ss.timestamp);
+        const appName = ss.app_name || "unknown";
+        const simPct  = ((ss.similarity ?? 0) * 100).toFixed(0);
+
+        print(`  ${BOLD}${ss.filename}${RESET}`);
+        print(`     ${DIM}time:${RESET}       ${ssTs}   ${DIM}app:${RESET} ${CYAN}${appName}${RESET}  ${DIM}window:${RESET} ${ss.window_title || "—"}`);
+        if (mode === "semantic") {
+          print(`     ${DIM}similarity:${RESET} ${CYAN}${simPct}%${RESET}`);
+        }
+        if (ss.ocr_text) {
+          const preview = ss.ocr_text.length > 100
+            ? ss.ocr_text.slice(0, 100).replace(/\n/g, " ") + "…"
+            : ss.ocr_text.replace(/\n/g, " ");
+          print(`     ${DIM}ocr:${RESET}        ${preview}`);
+        }
+
+        // ── EEG session ──────────────────────────────────────────────────
+        if (hit.session) {
+          const sess = hit.session;
+          const sessStart = fmtTs(sess.session_start_utc);
+          const sessEnd   = new Date(sess.session_end_utc * 1000).toLocaleTimeString(undefined, { timeZoneName: "short" });
+          const dur       = fmtDur(sess.session_end_utc - sess.session_start_utc);
+          print(`     ${DIM}EEG session:${RESET} ${YELLOW}${sessStart} → ${sessEnd}${RESET}  ${DIM}(${dur})${RESET}  ${DIM}device:${RESET} ${CYAN}${sess.device_name || "?"}${RESET}`);
+        } else {
+          print(`     ${DIM}EEG session:${RESET} ${DIM}none found near this timestamp${RESET}`);
+        }
+
+        // ── Labels near this screenshot ──────────────────────────────────
+        if (hit.labels && hit.labels.length > 0) {
+          print(`     ${DIM}labels (${hit.labels.length}):${RESET}`);
+          for (const lbl of hit.labels) {
+            const lblTs = fmtTs(lbl.label_start);
+            print(`       ${GREEN}"${lbl.text}"${RESET}  ${DIM}${lblTs}${RESET}  ${DIM}id:${RESET} ${CYAN}${lbl.id}${RESET}`);
+          }
+        } else {
+          print(`     ${DIM}labels:${RESET} ${DIM}none within ±${windowSecs}s${RESET}`);
+        }
+
+        print("");
+      }
+    }
+  }
+
+  printResult(r);
+}
+
+/**
+ * `screenshots-around --at <utc>` — Find screenshots near a given timestamp.
+ *
+ * Delegates to the server `screenshots_around` command which returns all
+ * screenshots within ±`window_secs` of the target timestamp.
+ *
+ * **HTTP / WS equivalent**:
+ * ```sh
+ * curl -s -X POST http://127.0.0.1:8375/ \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"command":"screenshots_around","timestamp":1740412800,"window_secs":60}'
+ * ```
+ *
+ * @param args - Parsed CLI arguments. `at` is the target unix timestamp (required).
+ */
+async function cmdScreenshotsAround(args: Args): Promise<void> {
+  if (args.at == null) printError('usage: npx neuroskill screenshots-around --at <unix_timestamp> [--seconds <window>]');
+  const timestamp  = args.at!;
+  const windowSecs = args.seconds ?? 60;
+
+  print(`${BOLD}⚡ screenshots-around${RESET}  ${DIM}(timestamp: ${timestamp}, window: ±${windowSecs}s)${RESET}`);
+
+  const r = await send({ command: "screenshots_around", timestamp, window_secs: windowSecs }, 30000);
+  if (!r.ok && r.error) printError(`server returned ok=false: ${r.error}`);
+
+  if (!jsonMode) {
+    const results = (r.results ?? []) as Array<{
+      timestamp: number; unix_ts: number; filename: string;
+      app_name: string; window_title: string; ocr_text: string;
+      similarity: number;
+    }>;
+
+    print(`\n  ${DIM}around:${RESET}  ${fmtTs(timestamp)}`);
+    print(`  ${DIM}window:${RESET}  ±${windowSecs}s   ${DIM}results:${RESET} ${GREEN}${r.count ?? results.length}${RESET}\n`);
+
+    if (results.length === 0) {
+      print(`  ${DIM}no screenshots found near that timestamp${RESET}`);
+    } else {
+      for (const hit of results) {
+        const ts      = fmtTs(hit.unix_ts ?? hit.timestamp);
+        const appName = hit.app_name || "unknown";
+
+        print(`  ${BOLD}${hit.filename}${RESET}`);
+        print(`     ${DIM}time:${RESET}  ${ts}   ${DIM}app:${RESET} ${CYAN}${appName}${RESET}  ${DIM}window:${RESET} ${hit.window_title || "—"}`);
+        if (hit.ocr_text) {
+          const preview = hit.ocr_text.length > 120
+            ? hit.ocr_text.slice(0, 120).replace(/\n/g, " ") + "…"
+            : hit.ocr_text.replace(/\n/g, " ");
+          print(`     ${DIM}ocr:${RESET}   ${preview}`);
         }
         print("");
       }
@@ -2832,6 +3887,619 @@ function progressBar(pct: number, width: number): string {
 }
 
 /**
+ * `health [subcommand]` — Query Apple HealthKit data synced from the iOS companion app.
+ *
+ * Subcommands:
+ * - (none) / `summary` — aggregate counts for a time range (default: last 24h)
+ * - `sleep`          — query sleep analysis samples
+ * - `workouts`       — query workout sessions
+ * - `hr`             — query heart rate samples
+ * - `steps`          — query step counts
+ * - `metrics`        — query scalar health metrics (requires `--metric-type`)
+ * - `metric-types`   — list all stored metric types
+ * - `sync`           — push HealthKit data (JSON payload)
+ */
+async function cmdHealth(args: Args): Promise<void> {
+  const sub = (args.subAction ?? "summary").toLowerCase();
+  const now = Math.floor(Date.now() / 1000);
+  const startUtc = args.start ?? (now - 86400);
+  const endUtc   = args.end   ?? now;
+  const limit    = args.limit ?? 100;
+
+  // ── sync ────────────────────────────────────────────────────────────────
+  if (sub === "sync") {
+    if (!args.rawJson) printError("usage: health sync '{\"sleep\":[...], \"steps\":[...], ...}'");
+    let payload: any;
+    try { payload = JSON.parse(args.rawJson!); } catch (e: any) {
+      printError(`invalid JSON payload: ${e.message}`);
+    }
+    payload.command = "health_sync";
+    print(`${BOLD}⚡ health sync${RESET}`);
+    const r = await send(payload);
+    if (!jsonMode) {
+      print("");
+      print(`  ${GREEN}synced${RESET}`);
+      if (r.sleep_upserted)       print(`    sleep:       ${CYAN}${r.sleep_upserted}${RESET} samples`);
+      if (r.workouts_upserted)    print(`    workouts:    ${CYAN}${r.workouts_upserted}${RESET}`);
+      if (r.heart_rate_upserted)  print(`    heart rate:  ${CYAN}${r.heart_rate_upserted}${RESET} samples`);
+      if (r.steps_upserted)       print(`    steps:       ${CYAN}${r.steps_upserted}${RESET}`);
+      if (r.mindfulness_upserted) print(`    mindfulness: ${CYAN}${r.mindfulness_upserted}${RESET}`);
+      if (r.metrics_upserted)     print(`    metrics:     ${CYAN}${r.metrics_upserted}${RESET}`);
+    }
+    printResult(r);
+    return;
+  }
+
+  // ── metric-types ────────────────────────────────────────────────────────
+  if (sub === "metric-types") {
+    print(`${BOLD}⚡ health metric-types${RESET}`);
+    const r = await send({ command: "health_metric_types" });
+    if (jsonMode) { printResult(r); return; }
+
+    const types: string[] = r.metric_types ?? [];
+    print("");
+    if (types.length === 0) {
+      print(`  ${DIM}no metric types stored yet${RESET}`);
+    } else {
+      print(`  ${CYAN}${types.length}${RESET} metric type(s):`);
+      for (const t of types) print(`    ${BOLD}${t}${RESET}`);
+    }
+    print("");
+    printResult(r);
+    return;
+  }
+
+  // ── summary ─────────────────────────────────────────────────────────────
+  if (sub === "summary" || !["sleep", "workouts", "hr", "steps", "metrics"].includes(sub)) {
+    const isDefault = args.start == null && args.end == null;
+    print(`${BOLD}⚡ health${RESET}  ${DIM}${isDefault ? "last 24h" : `${startUtc}–${endUtc}`}${RESET}`);
+
+    const r = await send({ command: "health_summary", start_utc: startUtc, end_utc: endUtc });
+    if (jsonMode) { printResult(r); return; }
+
+    print("");
+    print(`  ${CYAN}Apple Health Summary${RESET}`);
+    print(`    sleep samples    ${BOLD}${r.sleep_samples ?? 0}${RESET}`);
+    print(`    workouts         ${BOLD}${r.workouts ?? 0}${RESET}`);
+    print(`    heart rate       ${BOLD}${r.heart_rate_samples ?? 0}${RESET} samples`);
+    print(`    total steps      ${BOLD}${r.total_steps ?? 0}${RESET}`);
+    print(`    mindfulness      ${BOLD}${r.mindfulness_sessions ?? 0}${RESET} sessions`);
+    print(`    metrics          ${BOLD}${r.metric_entries ?? 0}${RESET} entries`);
+    print("");
+    if ((r.sleep_samples ?? 0) === 0 && (r.workouts ?? 0) === 0 && (r.total_steps ?? 0) === 0) {
+      print(`  ${DIM}No HealthKit data found. Sync from the iOS companion app:${RESET}`);
+      print(`  ${DIM}  POST /v1/health/sync  or  health sync '{...}'${RESET}`);
+      print("");
+    }
+    printResult(r);
+    return;
+  }
+
+  // ── typed queries ───────────────────────────────────────────────────────
+  const typeMap: Record<string, string> = {
+    sleep:    "sleep",
+    workouts: "workouts",
+    hr:       "heart_rate",
+    steps:    "steps",
+    metrics:  "metrics",
+  };
+  const dataType = typeMap[sub];
+  if (!dataType) printError(`unknown health subcommand: "${sub}"`);
+
+  if (dataType === "metrics" && !args.metricType) {
+    printError("health metrics requires --metric-type <type> (e.g. restingHeartRate, hrv, vo2Max).\n  Run 'health metric-types' to see available types.");
+  }
+
+  const payload: Record<string, unknown> = {
+    command: "health_query",
+    type: dataType,
+    start_utc: startUtc,
+    end_utc: endUtc,
+    limit,
+  };
+  if (args.metricType) payload.metric_type = args.metricType;
+
+  const isDefault = args.start == null && args.end == null;
+  print(`${BOLD}⚡ health ${sub}${RESET}  ${DIM}${isDefault ? "last 24h" : `${startUtc}–${endUtc}`}  limit: ${limit}${RESET}`);
+
+  const r = await send(payload as any);
+  if (jsonMode) { printResult(r); return; }
+
+  const results: any[] = r.results ?? [];
+  print("");
+  print(`  ${DIM}type:${RESET} ${CYAN}${r.type}${RESET}${r.metric_type ? `  ${DIM}metric:${RESET} ${CYAN}${r.metric_type}${RESET}` : ""}  ${DIM}count:${RESET} ${BOLD}${r.count ?? results.length}${RESET}`);
+
+  if (results.length === 0) {
+    print(`  ${DIM}no results${RESET}`);
+    print("");
+    printResult(r);
+    return;
+  }
+
+  // ── Format results by type ────────────────────────────────────────────
+  if (dataType === "sleep") {
+    print("");
+    for (const s of results) {
+      const start = new Date(s.start_utc * 1000).toLocaleString();
+      const end   = new Date(s.end_utc   * 1000).toLocaleString();
+      const dur   = Math.round((s.end_utc - s.start_utc) / 60);
+      const color = s.value === "REM" ? RED : s.value === "Deep" ? MAGENTA : s.value === "Awake" ? GREEN : BLUE;
+      print(`  ${color}${s.value.padEnd(8)}${RESET} ${DIM}${start} → ${end}${RESET}  ${CYAN}${dur}m${RESET}`);
+    }
+  } else if (dataType === "workouts") {
+    print("");
+    for (const w of results) {
+      const start = new Date(w.start_utc * 1000).toLocaleString();
+      const dur   = Math.round(w.duration_secs / 60);
+      const cal   = w.active_calories != null ? `${Math.round(w.active_calories)} kcal` : "";
+      const dist  = w.distance_meters != null ? `${(w.distance_meters / 1000).toFixed(1)} km` : "";
+      const hr    = w.avg_heart_rate != null ? `avg HR ${Math.round(w.avg_heart_rate)}` : "";
+      const meta  = [cal, dist, hr].filter(Boolean).join("  ");
+      print(`  ${BOLD}${w.workout_type}${RESET}  ${DIM}${start}${RESET}  ${CYAN}${dur}m${RESET}  ${meta}`);
+    }
+  } else if (dataType === "heart_rate") {
+    print("");
+    for (const hr of results) {
+      const ts  = new Date(hr.timestamp * 1000).toLocaleString();
+      const ctx = hr.context ? `  ${DIM}(${hr.context})${RESET}` : "";
+      const color = hr.bpm > 100 ? RED : hr.bpm < 60 ? BLUE : GREEN;
+      print(`  ${color}${hr.bpm.toFixed(0).padStart(3)} bpm${RESET}  ${DIM}${ts}${RESET}${ctx}`);
+    }
+  } else if (dataType === "steps") {
+    print("");
+    for (const s of results) {
+      const start = new Date(s.start_utc * 1000).toLocaleString();
+      const end   = new Date(s.end_utc   * 1000).toLocaleString();
+      print(`  ${BOLD}${s.count.toLocaleString()}${RESET} steps  ${DIM}${start} → ${end}${RESET}`);
+    }
+  } else if (dataType === "metrics") {
+    print("");
+    for (const m of results) {
+      const ts = new Date(m.timestamp * 1000).toLocaleString();
+      print(`  ${BOLD}${m.value}${RESET} ${DIM}${m.unit}${RESET}  ${DIM}${ts}${RESET}`);
+    }
+  }
+
+  print("");
+  printResult(r);
+}
+
+/**
+ * `sleep-schedule [set]` — Show or update the sleep schedule configuration.
+ *
+ * Without a subaction, prints the current schedule (bedtime, wake time,
+ * duration, and active preset).
+ *
+ * With `set`, updates one or more fields:
+ * - `--bedtime HH:MM` — set bedtime (24-h format)
+ * - `--wake HH:MM`    — set wake-up time (24-h format)
+ * - `--preset <id>`   — apply a named preset
+ *   (default, early_bird, night_owl, short_sleeper, long_sleeper)
+ *
+ * @param args - Parsed CLI args; `subAction` is `"set"` or undefined.
+ */
+async function cmdSleepSchedule(args: Args): Promise<void> {
+  const sub = args.subAction;
+
+  if (sub === "set") {
+    // Build the update payload — only include fields that were provided
+    const payload: Record<string, unknown> = { command: "sleep_schedule_set" };
+    if (args.bedtime) payload.bedtime   = args.bedtime;
+    if (args.wake)    payload.wake_time = args.wake;
+    if (args.preset)  payload.preset    = args.preset;
+
+    if (!args.bedtime && !args.wake && !args.preset) {
+      printError("sleep-schedule set requires at least one of: --bedtime HH:MM, --wake HH:MM, --preset <id>");
+    }
+
+    print(`${BOLD}⚡ sleep-schedule set${RESET}`);
+    if (args.bedtime) print(`  ${DIM}bedtime:${RESET}  ${CYAN}${args.bedtime}${RESET}`);
+    if (args.wake)    print(`  ${DIM}wake:${RESET}     ${CYAN}${args.wake}${RESET}`);
+    if (args.preset)  print(`  ${DIM}preset:${RESET}   ${CYAN}${args.preset}${RESET}`);
+
+    const r = await send(payload as any);
+    if (!r.ok) printError(`sleep_schedule_set failed: ${r.error ?? "unknown error"}`);
+
+    if (!jsonMode) {
+      print("");
+      print(`  ${GREEN}updated${RESET}`);
+      print(`  ${DIM}bedtime:${RESET}  ${CYAN}${r.bedtime}${RESET}`);
+      print(`  ${DIM}wake:${RESET}     ${CYAN}${r.wake_time}${RESET}`);
+      print(`  ${DIM}duration:${RESET} ${CYAN}${fmtSleepDuration(r.duration_minutes)}${RESET}`);
+      print(`  ${DIM}preset:${RESET}   ${CYAN}${r.preset}${RESET}`);
+    }
+
+    printResult(r);
+    return;
+  }
+
+  // ── Show current schedule ───────────────────────────────────────────────
+  print(`${BOLD}⚡ sleep-schedule${RESET}  ${DIM}current schedule${RESET}`);
+
+  const r = await send({ command: "sleep_schedule" });
+
+  if (jsonMode) {
+    printResult(r);
+    return;
+  }
+
+  const dur = r.duration_minutes ?? 0;
+  const h = Math.floor(dur / 60);
+  const m = dur % 60;
+
+  print("");
+  print(`  ${CYAN}Sleep Schedule${RESET}`);
+  print(`    bedtime    ${BOLD}${r.bedtime}${RESET}`);
+  print(`    wake       ${BOLD}${r.wake_time}${RESET}`);
+  print(`    duration   ${BOLD}${fmtSleepDuration(dur)}${RESET}  ${DIM}(${dur} min)${RESET}`);
+  print(`    preset     ${CYAN}${r.preset}${RESET}`);
+  print("");
+
+  // Show available presets
+  const presets = [
+    { id: "default",       bed: "23:00", wake: "07:00", h: 8 },
+    { id: "early_bird",    bed: "21:30", wake: "05:30", h: 8 },
+    { id: "night_owl",     bed: "01:00", wake: "09:00", h: 8 },
+    { id: "short_sleeper", bed: "00:00", wake: "06:00", h: 6 },
+    { id: "long_sleeper",  bed: "22:00", wake: "08:00", h: 10 },
+  ];
+
+  print(`  ${DIM}Available presets:${RESET}`);
+  for (const p of presets) {
+    const active = r.preset === p.id;
+    const marker = active ? `${GREEN}●${RESET}` : `${DIM}○${RESET}`;
+    print(`    ${marker}  ${(active ? BOLD : "") + p.id.padEnd(16) + (active ? RESET : "")}  ${DIM}${p.bed} — ${p.wake}  (${p.h}h)${RESET}`);
+  }
+
+  print("");
+  print(`  ${DIM}Set:  sleep-schedule set --bedtime 23:00 --wake 07:00${RESET}`);
+  print(`  ${DIM}      sleep-schedule set --preset early_bird${RESET}`);
+
+  printResult(r);
+}
+
+function fmtSleepDuration(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/**
+ * `dnd [on|off]` — Show DND automation status, or force-override it.
+ *
+ * With no subcommand, sends `{ command: "dnd" }` and prints the full status
+ * snapshot: config (enabled, threshold, duration, mode), live timer state
+ * (elapsed_secs toward duration_secs), and the real OS-level Focus state.
+ *
+ * With `on` or `off`, sends `{ command: "dnd_set", enabled: true/false }` to
+ * activate or deactivate DND immediately, bypassing the EEG threshold.
+ *
+ * **HTTP equivalents**
+ * ```sh
+ * # Status
+ * curl http://localhost:PORT/dnd
+ *
+ * # Force on
+ * curl -X POST http://localhost:PORT/dnd \
+ *      -H 'Content-Type: application/json' \
+ *      -d '{"enabled":true}'
+ *
+ * # Force off
+ * curl -X POST http://localhost:PORT/dnd \
+ *      -H 'Content-Type: application/json' \
+ *      -d '{"enabled":false}'
+ * ```
+ *
+ * @param args - Parsed CLI args; `subAction` is `"on"`, `"off"`, or undefined.
+ */
+async function cmdDnd(args: Args): Promise<void> {
+  const sub = args.subAction; // "on" | "off" | undefined
+
+  if (sub === "on" || sub === "off") {
+    // ── Force-override ──────────────────────────────────────────────────────
+    const enabled = sub === "on";
+    print(`${BOLD}⚡ dnd ${enabled ? "on" : "off"}${RESET}`);
+    print(`  ${DIM}force-${enabled ? "enabling" : "disabling"} DND (bypasses EEG threshold)${RESET}`);
+
+    const r = await send({ command: "dnd_set", enabled });
+    if (!r.ok) printError(`dnd_set failed: ${r.error ?? "OS call returned false"}`);
+
+    if (jsonMode) {
+      printResult(r);
+    } else {
+      const status = r.ok
+        ? `${GREEN}activated${RESET}`
+        : `${RED}failed (OS call rejected — check macOS Focus permissions)${RESET}`;
+      print(`  DND ${enabled ? "enabled" : "disabled"}  ${status}`);
+      printResult(r);
+    }
+    return;
+  }
+
+  // ── Status snapshot ─────────────────────────────────────────────────────
+  print(`${BOLD}⚡ dnd${RESET}  ${DIM}automation status${RESET}`);
+
+  const r = await send({ command: "dnd" });
+  if (!r.ok) printError(`dnd failed: ${r.error}`);
+
+  if (jsonMode) {
+    printResult(r);
+    return;
+  }
+
+  // Human-readable summary
+  const yn = (v: boolean | null | undefined) =>
+    v === true  ? `${GREEN}yes${RESET}` :
+    v === false ? `${RED}no${RESET}`   :
+    `${DIM}n/a (non-macOS)${RESET}`;
+
+  const avg = typeof r.avg_score === "number" ? r.avg_score : 0;
+
+  // Score bar — filled portion represents avg_score / 100
+  const scoreBar = (avg: number, threshold: number) => {
+    const pct  = Math.min(avg / 100, 1.0);
+    const fill = Math.round(pct * 24);
+    const empty = 24 - fill;
+    const color = avg >= threshold ? GREEN : YELLOW;
+    return `${color}${"█".repeat(fill)}${RESET}${DIM}${"░".repeat(empty)}${RESET}  ${avg.toFixed(1)} / ${threshold}`;
+  };
+
+  // Window fill bar — how many samples collected vs target
+  const windowBar = (count: number, total: number) => {
+    const pct  = total > 0 ? Math.min(count / total, 1.0) : 0;
+    const fill = Math.round(pct * 24);
+    const empty = 24 - fill;
+    return `${CYAN}${"█".repeat(fill)}${RESET}${DIM}${"░".repeat(empty)}${RESET}  ${count} / ${total} samples`;
+  };
+
+  print("");
+  print(`  ${CYAN}DND automation${RESET}`);
+  print(`    enabled        ${yn(r.enabled)}${r.enabled ? "" : `  ${DIM}(turn on in Settings → Do Not Disturb)${RESET}`}`);
+  print(`    threshold      ${CYAN}${r.threshold}${RESET}  ${DIM}avg focus score (0–100) required to activate${RESET}`);
+  print(`    window         ${CYAN}${r.duration_secs}s${RESET}  ${DIM}(≈ ${r.window_size} samples at ~4 Hz)${RESET}`);
+  print(`    mode           ${DIM}${r.mode_identifier}${RESET}`);
+  print("");
+  print(`  ${CYAN}Rolling average${RESET}  ${DIM}(avg of last ${r.window_size} focus scores)${RESET}`);
+  print(`    ${scoreBar(avg, r.threshold)}`);
+  if (avg >= r.threshold) {
+    print(`    ${GREEN}▶ above threshold — DND ${r.dnd_active ? "is active" : "activates once window fills"}${RESET}`);
+  } else {
+    print(`    ${DIM}▷ below threshold  (need ${(r.threshold - avg).toFixed(1)} more)${RESET}`);
+  }
+  print("");
+  print(`  ${CYAN}Sample window${RESET}`);
+  print(`    ${windowBar(r.sample_count, r.window_size)}`);
+  if (r.sample_count < r.window_size) {
+    print(`    ${DIM}▷ filling… (${r.window_size - r.sample_count} samples until window is full)${RESET}`);
+  }
+  print("");
+  print(`  ${CYAN}State${RESET}`);
+  print(`    app activated  ${yn(r.dnd_active)}  ${DIM}(this app set DND)${RESET}`);
+  print(`    OS active      ${yn(r.os_active)}  ${DIM}(macOS Assertions.json / defaults read)${RESET}`);
+
+  if (r.dnd_active !== r.os_active && r.os_active !== null) {
+    print(`    ${YELLOW}⚠ app and OS states differ — OS may have been changed manually${RESET}`);
+  }
+  if (!r.enabled && r.os_active) {
+    print(`    ${YELLOW}⚠ DND is on but automation is disabled — disable manually or turn automation on${RESET}`);
+  }
+
+  print("");
+  print(`  ${DIM}Tips:${RESET}`);
+  print(`    ${DIM}• 'dnd on'  — force-enable immediately${RESET}`);
+  print(`    ${DIM}• 'dnd off' — force-disable immediately${RESET}`);
+  print(`    ${DIM}• 'listen'  — streams dnd-eligibility events live (avg_score, sample_count, dnd_active)${RESET}`);
+
+  printResult(r);
+}
+
+async function cmdHooks(args: Args): Promise<void> {
+  const sub = (args.subAction ?? "status").toLowerCase();
+
+  if (sub === "status") {
+    print(`${BOLD}🪝 proactive hooks${RESET}`);
+    const r = await send({ command: "hooks_status" });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_status failed"); }
+
+    const hooks = Array.isArray(r.hooks) ? r.hooks : [];
+    if (hooks.length === 0) {
+      print(`  ${DIM}(no hooks configured)${RESET}`);
+      printResult(r);
+      return;
+    }
+
+    for (const row of hooks) {
+      const hook = row.hook ?? {};
+      const trig = row.last_trigger ?? null;
+      const enabled = hook.enabled ? `${GREEN}on${RESET}` : `${GRAY}off${RESET}`;
+      const scenario = String(hook.scenario ?? "any");
+      print(`  ${CYAN}${hook.name ?? "(unnamed)"}${RESET}  [${enabled}]  ${DIM}scenario=${scenario}${RESET}`);
+      if (trig?.triggered_at_utc) {
+        const label = trig.label_text ? ` label=${JSON.stringify(trig.label_text)}` : "";
+        const dist = typeof trig.distance === "number" ? ` d=${trig.distance.toFixed(3)}` : "";
+        print(`    last=${trig.triggered_at_utc}${dist}${label}`);
+      } else {
+        print(`    ${DIM}last=never${RESET}`);
+      }
+    }
+
+    printResult(r);
+    return;
+  }
+
+  if (sub === "suggest") {
+    if (!args.text) printError('usage: npx neuroskill hooks suggest "kw1,kw2"');
+    const keywords = (args.text ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    print(`${BOLD}🪝 hooks suggest${RESET} ${DIM}${keywords.join(", ")}${RESET}`);
+    const r = await send({ command: "hooks_suggest", keywords });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_suggest failed"); }
+    const s = r.suggestion ?? {};
+    print(`  suggested   ${CYAN}${Number(s.suggested ?? 0.1).toFixed(2)}${RESET}`);
+    print(`  distances   min=${Number(s.eeg_min ?? 0).toFixed(3)} p25=${Number(s.eeg_p25 ?? 0).toFixed(3)} p50=${Number(s.eeg_p50 ?? 0).toFixed(3)} p75=${Number(s.eeg_p75 ?? 0).toFixed(3)} max=${Number(s.eeg_max ?? 0).toFixed(3)}`);
+    print(`  samples     labels=${s.label_n ?? 0} refs=${s.ref_n ?? 0} eeg=${s.sample_n ?? 0}`);
+    if (s.note) print(`  ${DIM}${s.note}${RESET}`);
+    printResult(r);
+    return;
+  }
+
+  if (sub === "log") {
+    const limit = args.limit ?? 20;
+    const offset = args.offset ?? 0;
+    print(`${BOLD}🪝 hooks log${RESET} ${DIM}(limit=${limit}, offset=${offset})${RESET}`);
+    const r = await send({ command: "hooks_log", limit, offset });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_log failed"); }
+    const rows = Array.isArray(r.rows) ? r.rows : [];
+    const total = Number(r.total ?? 0);
+
+    if (rows.length === 0) {
+      print(`  ${DIM}(no hook events)${RESET}`);
+      printResult(r);
+      return;
+    }
+
+    for (const row of rows) {
+      let hookName = "(unknown)";
+      let scenario = "any";
+      let label = "";
+      let dist = "";
+      try {
+        const h = JSON.parse(row.hook_json ?? "{}");
+        const t = JSON.parse(row.trigger_json ?? "{}");
+        hookName = h.name ?? hookName;
+        scenario = h.scenario ?? scenario;
+        if (t.label_text) label = ` label=${JSON.stringify(t.label_text)}`;
+        if (typeof t.distance === "number") dist = ` d=${t.distance.toFixed(3)}`;
+      } catch {}
+      print(`  ${CYAN}${hookName}${RESET}  ${DIM}[${scenario}]${RESET}  ts=${row.triggered_at_utc}${dist}${label}`);
+    }
+    print(`  ${DIM}showing ${rows.length} row(s), total=${total}${RESET}`);
+    printResult(r);
+    return;
+  }
+
+  if (sub === "list") {
+    print(`${BOLD}🪝 hooks list${RESET}`);
+    const r = await send({ command: "hooks_get" });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_get failed"); }
+
+    const hooks = Array.isArray(r.hooks) ? r.hooks : [];
+    if (hooks.length === 0) {
+      print(`  ${DIM}(no hooks configured)${RESET}`);
+      printResult(r);
+      return;
+    }
+
+    for (const h of hooks) {
+      const enabled = h.enabled ? `${GREEN}on${RESET}` : `${GRAY}off${RESET}`;
+      const kws = Array.isArray(h.keywords) ? h.keywords.join(", ") : "";
+      print(`  ${CYAN}${h.name ?? "(unnamed)"}${RESET}  [${enabled}]  scenario=${h.scenario ?? "any"}  threshold=${Number(h.distance_threshold ?? 0.1).toFixed(2)}  recent=${h.recent_limit ?? 12}`);
+      if (kws) print(`    keywords: ${kws}`);
+      if (h.command) print(`    command: ${h.command}`);
+      if (h.text)    print(`    text: ${h.text}`);
+    }
+    printResult(r);
+    return;
+  }
+
+  if (sub === "add") {
+    if (!args.hookName) printError('usage: hooks add <name> [--keywords "k1,k2"] [--scenario any] [--command cmd] [--hook-text txt] [--threshold 0.14] [--recent 12]');
+
+    // Fetch current hooks
+    const r0 = await send({ command: "hooks_get" });
+    if (!r0.ok) { printResult(r0); printError(r0.error ?? "hooks_get failed"); }
+    const current: any[] = Array.isArray(r0.hooks) ? r0.hooks : [];
+
+    if (current.some((h: any) => h.name === args.hookName)) {
+      printError(`hook "${args.hookName}" already exists — use 'hooks update' to modify it`);
+    }
+
+    const newHook: any = {
+      name: args.hookName!,
+      enabled: true,
+      keywords: args.hookKeywords ? args.hookKeywords.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+      scenario: args.hookScenario ?? "any",
+      command: args.hookCommand ?? "",
+      text: args.hookText ?? "",
+      distance_threshold: args.hookThreshold ?? 0.1,
+      recent_limit: args.hookRecent ?? 12,
+    };
+
+    current.push(newHook);
+    const r = await send({ command: "hooks_set", hooks: current });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_set failed"); }
+    print(`${GREEN}✓${RESET} hook ${CYAN}${args.hookName}${RESET} added`);
+    printResult(r);
+    return;
+  }
+
+  if (sub === "remove") {
+    if (!args.hookName) printError("usage: hooks remove <name>");
+
+    const r0 = await send({ command: "hooks_get" });
+    if (!r0.ok) { printResult(r0); printError(r0.error ?? "hooks_get failed"); }
+    const current: any[] = Array.isArray(r0.hooks) ? r0.hooks : [];
+    const before = current.length;
+    const filtered = current.filter((h: any) => h.name !== args.hookName);
+
+    if (filtered.length === before) {
+      printError(`hook "${args.hookName}" not found`);
+    }
+
+    const r = await send({ command: "hooks_set", hooks: filtered });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_set failed"); }
+    print(`${GREEN}✓${RESET} hook ${CYAN}${args.hookName}${RESET} removed`);
+    printResult(r);
+    return;
+  }
+
+  if (sub === "enable" || sub === "disable") {
+    if (!args.hookName) printError(`usage: hooks ${sub} <name>`);
+
+    const r0 = await send({ command: "hooks_get" });
+    if (!r0.ok) { printResult(r0); printError(r0.error ?? "hooks_get failed"); }
+    const current: any[] = Array.isArray(r0.hooks) ? r0.hooks : [];
+    const hook = current.find((h: any) => h.name === args.hookName);
+    if (!hook) printError(`hook "${args.hookName}" not found`);
+
+    hook.enabled = sub === "enable";
+    const r = await send({ command: "hooks_set", hooks: current });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_set failed"); }
+    print(`${GREEN}✓${RESET} hook ${CYAN}${args.hookName}${RESET} ${sub === "enable" ? "enabled" : "disabled"}`);
+    printResult(r);
+    return;
+  }
+
+  if (sub === "update") {
+    if (!args.hookName) printError('usage: hooks update <name> [--keywords "k1,k2"] [--scenario any] [--command cmd] [--hook-text txt] [--threshold 0.14] [--recent 12]');
+
+    const r0 = await send({ command: "hooks_get" });
+    if (!r0.ok) { printResult(r0); printError(r0.error ?? "hooks_get failed"); }
+    const current: any[] = Array.isArray(r0.hooks) ? r0.hooks : [];
+    const hook = current.find((h: any) => h.name === args.hookName);
+    if (!hook) printError(`hook "${args.hookName}" not found`);
+
+    if (args.hookKeywords !== undefined) hook.keywords = args.hookKeywords.split(",").map((s: string) => s.trim()).filter(Boolean);
+    if (args.hookScenario !== undefined) hook.scenario = args.hookScenario;
+    if (args.hookCommand  !== undefined) hook.command  = args.hookCommand;
+    if (args.hookText     !== undefined) hook.text     = args.hookText;
+    if (args.hookThreshold !== undefined) hook.distance_threshold = args.hookThreshold;
+    if (args.hookRecent    !== undefined) hook.recent_limit = args.hookRecent;
+
+    const r = await send({ command: "hooks_set", hooks: current });
+    if (!r.ok) { printResult(r); printError(r.error ?? "hooks_set failed"); }
+    print(`${GREEN}✓${RESET} hook ${CYAN}${args.hookName}${RESET} updated`);
+    printResult(r);
+    return;
+  }
+
+  printError(`unknown hooks subcommand: "${sub}". Valid: status list add remove enable disable update suggest log`);
+}
+
+/**
  * `listen` — Passively listen for broadcast events from the Skill server.
  *
  * Opens a WebSocket and collects all broadcast events (EEG packets, PPG,
@@ -2886,6 +4554,24 @@ async function cmdListen(seconds: number): Promise<void> {
     print(`  ${CYAN}${type}${RESET} ${DIM}×${evts.length}${RESET}`);
   }
 
+  // ── Highlight hook triggers ─────────────────────────────────────────────
+  const hookEvents = byType["hook"] ?? [];
+  if (hookEvents.length > 0) {
+    print("");
+    print(`  ${BOLD}🪝 Hook Triggers${RESET}`);
+    for (const e of hookEvents) {
+      const p = e.payload ?? e;
+      const distStr = typeof p.distance === "number" ? p.distance.toFixed(4) : "?";
+      const distColor = typeof p.distance === "number" && p.distance < 0.1 ? GREEN : CYAN;
+      print(`  ${YELLOW}${p.hook ?? "(unnamed)"}${RESET}  ${DIM}[${p.scenario ?? "any"}]${RESET}  ${DIM}dist:${RESET} ${distColor}${distStr}${RESET}`);
+      if (p.label_text) {
+        print(`    ${DIM}matched label:${RESET} ${GREEN}"${p.label_text}"${RESET}  ${DIM}id:${RESET} ${CYAN}${p.label_id ?? "?"}${RESET}`);
+      }
+      if (p.command) print(`    ${DIM}command:${RESET} ${p.command}`);
+      if (p.text)    print(`    ${DIM}text:${RESET} ${p.text}`);
+    }
+  }
+
   print("");
   printResult(events);
 }
@@ -2915,6 +4601,747 @@ async function cmdListen(seconds: number): Promise<void> {
  *
  * @param rawJson - The raw JSON string to send, e.g. `'{"command":"status"}'`.
  */
+// ── LLM image helpers ─────────────────────────────────────────────────────────
+
+import { readFileSync } from "fs";
+import { extname } from "path";
+
+/**
+ * Infer the MIME type from a file extension.
+ */
+function imageMime(filePath: string): string {
+  const ext = extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".png":  return "image/png";
+    case ".gif":  return "image/gif";
+    case ".webp": return "image/webp";
+    case ".bmp":  return "image/bmp";
+    default:      return "image/jpeg";
+  }
+}
+
+/**
+ * Read one image file from disk and return an OpenAI-format `image_url` content part:
+ * ```json
+ * { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,..." } }
+ * ```
+ * Throws if the file cannot be read.
+ */
+function loadImagePart(filePath: string): { type: string; image_url: { url: string } } {
+  let data: Buffer;
+  try { data = readFileSync(filePath); }
+  catch (e: any) { printError(`cannot read image file "${filePath}": ${e.message}`); }
+  const mime = imageMime(filePath);
+  const url  = `data:${mime};base64,${data!.toString("base64")}`;
+  return { type: "image_url", image_url: { url } };
+}
+
+/**
+ * Load multiple image files and return them as `image_url` content parts.
+ * Exits with an error if any file cannot be read.
+ */
+function loadImageParts(
+  filePaths: string[],
+): Array<{ type: string; image_url: { url: string } }> {
+  return filePaths.map(loadImagePart);
+}
+
+/**
+ * Build an OpenAI user message that may contain images + text.
+ *
+ * If `imageParts` is non-empty the content is a parts array
+ * `[...imageParts, {type:"text", text}]`; otherwise it is a plain string.
+ */
+function buildUserMessage(
+  text: string,
+  imageParts: Array<{ type: string; image_url: { url: string } }>,
+): { role: string; content: unknown } {
+  if (imageParts.length === 0) {
+    return { role: "user", content: text };
+  }
+  const parts: unknown[] = [...imageParts];
+  if (text) parts.push({ type: "text", text });
+  return { role: "user", content: parts };
+}
+
+// ── LLM command ───────────────────────────────────────────────────────────────
+
+/**
+ * `llm` — control the built-in LLM inference server.
+ *
+ * Subcommands:
+ *   status                  Print server state (stopped/loading/running), model, context size
+ *   start                   Load the active model and start the inference server
+ *   stop                    Stop the server and free GPU/CPU memory
+ *   catalog                 List all models with download states and active selections
+ *   download <filename>     Download a GGUF model by filename (fire-and-forget; poll catalog for progress)
+ *   cancel <filename>       Cancel an in-progress download
+ *   delete <filename>       Delete a locally-cached model file
+ *   logs                    Print last 500 LLM server log lines
+ *   chat                    Interactive multi-turn REPL (type /help inside; exit to quit)
+ *   chat "message"          Single-shot: send one message, stream the reply, and exit
+ *   chat --image <path>     Attach images to a message (vision models only)
+ */
+async function cmdLlm(args: Args): Promise<void> {
+  const sub = args.subAction ?? "status";
+
+  switch (sub) {
+    // ── status ──────────────────────────────────────────────────────────────
+    case "status": {
+      print(`${BOLD}🤖 llm status${RESET}`);
+      const r = await send({ command: "llm_status" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_status failed"); }
+      const statusColor = r.status === "running" ? GREEN : r.status === "loading" ? YELLOW : GRAY;
+      print(`  status         ${statusColor}${r.status}${RESET}`);
+      if (r.model_name) print(`  model          ${CYAN}${r.model_name}${RESET}`);
+      if (r.n_ctx)       print(`  context window ${CYAN}${r.n_ctx}${RESET} tokens`);
+      print(`  vision         ${r.supports_vision ? `${GREEN}yes${RESET}` : `${GRAY}no${RESET}`}`);
+      printResult(r);
+      break;
+    }
+
+    // ── start ────────────────────────────────────────────────────────────────
+    case "start": {
+      print(`${BOLD}🤖 llm start${RESET} ${DIM}(loading model — this may take several seconds)${RESET}`);
+      const r = await send({ command: "llm_start" }, 120_000);
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_start failed"); }
+      print(`  ${GREEN}✓${RESET} ${r.result}`);
+      printResult(r);
+      break;
+    }
+
+    // ── stop ─────────────────────────────────────────────────────────────────
+    case "stop": {
+      print(`${BOLD}🤖 llm stop${RESET}`);
+      const r = await send({ command: "llm_stop" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_stop failed"); }
+      print(`  ${GREEN}✓${RESET} ${r.result}`);
+      printResult(r);
+      break;
+    }
+
+    // ── catalog ───────────────────────────────────────────────────────────────
+    case "catalog": {
+      print(`${BOLD}🤖 llm catalog${RESET}`);
+      const r = await send({ command: "llm_catalog" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_catalog failed"); }
+      const entries: any[] = r.entries ?? [];
+      print(`  ${entries.length} model(s) in catalog`);
+      print(`  active model   ${CYAN}${r.active_model || "(none)"}${RESET}`);
+      print(`  active mmproj  ${CYAN}${r.active_mmproj || "(none)"}${RESET}`);
+      print("");
+      for (const e of entries) {
+        const stateColor = e.state === "downloaded" ? GREEN
+          : e.state === "downloading" ? YELLOW
+          : e.state === "failed"      ? RED
+          : GRAY;
+        const pct = e.state === "downloading" ? ` ${Math.round((e.progress ?? 0) * 100)}%` : "";
+        const active = e.filename === r.active_model ? ` ${GREEN}← active${RESET}` : "";
+        print(`  ${stateColor}${e.state}${RESET}${pct}  ${CYAN}${e.filename}${RESET}${active}`);
+        if (e.status_msg) print(`            ${DIM}${e.status_msg}${RESET}`);
+      }
+      printResult(r);
+      break;
+    }
+
+    // ── download ─────────────────────────────────────────────────────────────
+    case "download": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm download <filename>");
+      print(`${BOLD}🤖 llm download${RESET} ${CYAN}${filename}${RESET} ${DIM}(fire-and-forget — poll 'llm catalog' for progress)${RESET}`);
+      const r = await send({ command: "llm_download", filename });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_download failed"); }
+      print(`  ${GREEN}✓${RESET} queued: ${CYAN}${r.filename}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── cancel ───────────────────────────────────────────────────────────────
+    case "cancel": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm cancel <filename>");
+      print(`${BOLD}🤖 llm cancel${RESET} ${CYAN}${filename}${RESET}`);
+      const r = await send({ command: "llm_cancel_download", filename });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_cancel_download failed"); }
+      print(`  ${GREEN}✓${RESET} cancel signalled for ${CYAN}${r.filename}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── delete ───────────────────────────────────────────────────────────────
+    case "delete": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm delete <filename>");
+      print(`${BOLD}🤖 llm delete${RESET} ${CYAN}${filename}${RESET}`);
+      const r = await send({ command: "llm_delete", filename });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_delete failed"); }
+      print(`  ${GREEN}✓${RESET} deleted ${CYAN}${r.filename}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── logs ─────────────────────────────────────────────────────────────────
+    case "logs": {
+      print(`${BOLD}🤖 llm logs${RESET}`);
+      const r = await send({ command: "llm_logs" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_logs failed"); }
+      const logs: any[] = r.logs ?? [];
+      if (logs.length === 0) {
+        print(`  ${GRAY}(no log entries)${RESET}`);
+      } else {
+        for (const entry of logs) {
+          const levelColor = entry.level === "error" ? RED : entry.level === "warn" ? YELLOW : GRAY;
+          const ts = new Date(entry.ts).toISOString().replace("T", " ").replace("Z", "");
+          print(`  ${GRAY}${ts}${RESET} ${levelColor}[${entry.level}]${RESET} ${entry.message}`);
+        }
+      }
+      print(`  ${DIM}${logs.length} log line(s)${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── chat ─────────────────────────────────────────────────────────────────
+    case "chat": {
+      if (transport !== "ws") {
+        printError(
+          "llm chat requires WebSocket (HTTP has no streaming support).\n" +
+          "  Use --ws to force WebSocket, or omit --http for auto-transport."
+        );
+      }
+
+      // ── Shared GenParams (applied to every turn) ──────────────────────────
+      const genParams: Record<string, unknown> = {};
+      if (args.temperature !== undefined) genParams.temperature = args.temperature;
+      if (args.maxTokens   !== undefined) genParams.max_tokens  = args.maxTokens;
+
+      // ── Known LLM error patterns → actionable diagnostics ─────────────────
+      /**
+       * Inspect an LLM error message and return an enriched version with a
+       * human-readable hint when it matches a known failure pattern.
+       *
+       * Known patterns:
+       * - `n_tokens_all <= cparams.n_batch` — prompt exceeded llama.cpp batch
+       *   size.  This was a crash-level abort prior to the batched-decode fix.
+       * - `prompt too long (N >= n_ctx M)` — prompt exceeds the context window.
+       * - `decode error on prompt` — native decode failure (GPU OOM, driver).
+       * - `template error:` — chat template could not be applied.
+       * - `generation task panicked` — native code panic/abort (usually GGML).
+       * - `tokenization failed` — model failed to tokenize the input.
+       */
+      function classifyLlmError(msg: string): string {
+        const lower = msg.toLowerCase();
+        if (lower.includes("n_tokens_all") && lower.includes("n_batch")) {
+          return `${msg}\n  → Prompt batch exceeded llama.cpp n_batch limit. ` +
+            `This is a known bug (now fixed in batched-decode). Update to the latest build.`;
+        }
+        if (lower.includes("prompt too long") || (lower.includes("n_ctx") && lower.includes(">="))) {
+          return `${msg}\n  → Prompt + conversation history exceeds the model context window. ` +
+            `Try a shorter message, start a new chat, or increase n_ctx in Settings → LLM.`;
+        }
+        if (lower.includes("decode error")) {
+          return `${msg}\n  → Native decode failure during prompt ingestion. ` +
+            `Possible causes: GPU out of memory, driver crash, or corrupted model file.`;
+        }
+        if (lower.includes("template error")) {
+          return `${msg}\n  → The model's chat template could not be applied. ` +
+            `The model file may be corrupted or incompatible — try re-downloading it.`;
+        }
+        if (lower.includes("generation task panicked") || lower.includes("ggml_assert")) {
+          return `${msg}\n  → The inference engine crashed (native abort/panic). ` +
+            `This usually indicates a llama.cpp assertion failure — update to the latest build.`;
+        }
+        if (lower.includes("tokenization failed")) {
+          return `${msg}\n  → The model failed to tokenize the input. ` +
+            `The model file may be corrupted — try re-downloading it.`;
+        }
+        return msg;
+      }
+
+      // ── Stream one assistant turn, returns accumulated text ───────────────
+      /**
+       * Send a `llm_chat` WebSocket command with the current conversation
+       * history and stream delta tokens directly to stdout.
+       *
+       * Resolves with the full assistant reply text so the caller can append
+       * it to the history for the next turn.  Rejects on timeout or error.
+       */
+      function streamTurn(
+        messages: Array<{ role: string; content: string }>,
+        timeoutMs = 120_000,
+        sessionId?: number,
+      ): Promise<{ text: string; promptTokens: number; completionTokens: number; nCtx: number; sessionId: number }> {
+        return new Promise((resolve, reject) => {
+          let text = "";
+          let sid = sessionId ?? 0;
+          const timer = setTimeout(() => {
+            ws.off("message", handler);
+            reject(new Error("llm_chat timeout"));
+          }, timeoutMs);
+
+          const handler = (raw: any) => {
+            let data: any;
+            try { data = JSON.parse(raw.toString()); } catch { return; }
+            if (data.command !== "llm_chat") return;
+
+            switch (data.type) {
+              case "session":
+                // Server sends session_id for chat persistence
+                if (data.session_id) sid = data.session_id;
+                break;
+              case "delta":
+                process.stdout.write(data.text ?? "");
+                text += data.text ?? "";
+                break;
+              case "done":
+                process.stdout.write("\n");
+                clearTimeout(timer);
+                ws.off("message", handler);
+                if (data.session_id) sid = data.session_id;
+                resolve({
+                  text,
+                  promptTokens:     data.prompt_tokens     ?? 0,
+                  completionTokens: data.completion_tokens ?? 0,
+                  nCtx:             data.n_ctx             ?? 0,
+                  sessionId:        sid,
+                });
+                break;
+              case "error":
+                clearTimeout(timer);
+                ws.off("message", handler);
+                reject(new Error(data.error ?? "llm_chat error"));
+                break;
+              default:
+                if (data.ok === false) {
+                  clearTimeout(timer);
+                  ws.off("message", handler);
+                  reject(new Error(data.error ?? "llm_chat failed"));
+                }
+            }
+          };
+
+          ws.on("message", handler);
+          const payload: Record<string, unknown> = { command: "llm_chat", messages, ...genParams };
+          if (sid > 0) payload.session_id = sid;
+          ws.send(JSON.stringify(payload));
+        });
+      }
+
+      // ── Conversation history (grows across turns) ─────────────────────────
+      const history: Array<{ role: string; content: unknown }> = [];
+      if (args.system) {
+        history.push({ role: "system", content: args.system });
+      }
+
+      // ── Single-shot mode: message provided on command line ────────────────
+      if (args.text) {
+        // Load any --image flags from disk
+        const imgParts = loadImageParts(args.images ?? []);
+        if (imgParts.length > 0 && transport !== "ws") {
+          // HTTP fallback: use POST /llm/chat which accepts base64 JSON
+          const imageUrls = imgParts.map(p => p.image_url.url);
+          const payload: Record<string, unknown> = {
+            message:     args.text,
+            images:      imageUrls,
+            ...(args.system      && { system:      args.system      }),
+            ...(args.temperature !== undefined && { temperature: args.temperature }),
+            ...(args.maxTokens   !== undefined && { max_tokens:  args.maxTokens   }),
+          };
+          print(`${BOLD}🤖 llm chat${RESET} ${DIM}${args.text}${RESET} ${DIM}[${imgParts.length} image(s) via HTTP]${RESET}\n`);
+          let res: Response;
+          try {
+            res = await fetch(`${httpBase}/llm/chat`, {
+              method:  "POST",
+              headers: { "Content-Type": "application/json" },
+              body:    JSON.stringify(payload),
+            });
+          } catch (e: any) { printError(`POST /llm/chat failed: ${e.message}`); }
+          const r = await res!.json();
+          if (!r.ok) { printResult(r); printError(classifyLlmError(r.error ?? "llm chat failed")); }
+          print(r.text);
+          if (!jsonMode) {
+            print(`\n${DIM}  finish: ${r.prompt_tokens}+${r.completion_tokens} tokens, n_ctx=${r.n_ctx}, session=${r.session_id ?? 0}${RESET}`);
+          } else {
+            console.log(JSON.stringify({ text: r.text, prompt_tokens: r.prompt_tokens, completion_tokens: r.completion_tokens, session_id: r.session_id ?? 0 }));
+          }
+          break;
+        }
+
+        history.push(buildUserMessage(args.text, imgParts));
+        const imgNote = imgParts.length > 0 ? ` ${DIM}[${imgParts.length} image(s)]${RESET}` : "";
+        print(`${BOLD}🤖 llm chat${RESET} ${DIM}${args.text}${RESET}${imgNote}\n`);
+        const result = await streamTurn(history as Array<{ role: string; content: string }>)
+          .catch((e: any) => {
+            const diagnosed = classifyLlmError(e.message ?? String(e));
+            printError(`llm chat: ${diagnosed}`);
+          });
+        if (!jsonMode) {
+          print(`\n${DIM}  finish: ${result.promptTokens}+${result.completionTokens} tokens, n_ctx=${result.nCtx}, session=${result.sessionId}${RESET}`);
+        } else {
+          console.log(JSON.stringify({
+            text:               result.text,
+            prompt_tokens:      result.promptTokens,
+            completion_tokens:  result.completionTokens,
+            session_id:         result.sessionId,
+          }));
+        }
+        break;
+      }
+
+      // ── Interactive REPL mode: no message arg provided ────────────────────
+      const readline = await import("readline");
+      const rl = readline.createInterface({
+        input:  process.stdin,
+        output: process.stdout,
+        terminal: true,
+      });
+
+      // Track token usage across the session
+      let totalPrompt = 0;
+      let totalCompletion = 0;
+      let turnCount = 0;
+      // Persistent session_id — set on first turn, reused across the REPL
+      // so all messages in a multi-turn conversation belong to the same chat session.
+      let sessionId = 0;
+      // Images staged for the next message (set via /image command)
+      let pendingImages: Array<{ type: string; image_url: { url: string } }> =
+        loadImageParts(args.images ?? []);
+
+      const systemNote = args.system
+        ? `${DIM}system: ${args.system.slice(0, 60)}${args.system.length > 60 ? "…" : ""}${RESET}\n`
+        : "";
+
+      // Print header
+      process.stdout.write(
+        `\n${BOLD}🤖 NeuroSkill™ LLM Chat${RESET}  ${DIM}(type ${CYAN}exit${DIM} or press ${CYAN}Ctrl+C${DIM} to quit)${RESET}\n` +
+        systemNote +
+        `${DIM}─────────────────────────────────────────────────────────────${RESET}\n\n`,
+      );
+
+      // Wrap the readline question in a promise so we can await it
+      const question = (prompt: string): Promise<string | null> =>
+        new Promise((resolve) => {
+          rl.question(prompt, resolve);
+          rl.once("close", () => resolve(null)); // Ctrl+D / pipe closed
+        });
+
+      // Graceful Ctrl+C
+      rl.on("SIGINT", () => {
+        process.stdout.write("\n");
+        rl.close();
+      });
+
+      // Chat loop
+      while (true) {
+        // Show pending image indicator in the prompt
+        const imgIndicator = pendingImages.length > 0
+          ? `${YELLOW}[${pendingImages.length} img]${RESET} `
+          : "";
+        const input = await question(`${imgIndicator}${BOLD}${CYAN}You:${RESET} `);
+
+        // null = Ctrl+D / pipe closed
+        if (input === null) break;
+
+        const trimmed = input.trim();
+        if (!trimmed) continue;
+        if (trimmed.toLowerCase() === "exit" || trimmed.toLowerCase() === "quit") break;
+
+        // ── REPL commands ────────────────────────────────────────────────────
+        if (trimmed === "/clear") {
+          history.length = 0;
+          if (args.system) history.push({ role: "system", content: args.system });
+          pendingImages = [];
+          turnCount = 0;
+          sessionId = 0; // new session will be created on next turn
+          process.stdout.write(`${DIM}  conversation cleared (new session on next message)${RESET}\n\n`);
+          continue;
+        }
+
+        if (trimmed === "/history") {
+          for (const m of history) {
+            const roleColor = m.role === "user" ? CYAN : m.role === "system" ? YELLOW : GREEN;
+            const contentStr = typeof m.content === "string"
+              ? m.content
+              : JSON.stringify(m.content);
+            process.stdout.write(
+              `${roleColor}[${m.role}]${RESET} ${contentStr.slice(0, 120)}${contentStr.length > 120 ? "…" : ""}\n`,
+            );
+          }
+          process.stdout.write("\n");
+          continue;
+        }
+
+        if (trimmed.startsWith("/image ")) {
+          // /image <path> — load image file for the next message
+          const imgPath = trimmed.slice(7).trim();
+          try {
+            const part = loadImagePart(imgPath);
+            pendingImages.push(part);
+            process.stdout.write(
+              `${GREEN}  ✓ image staged${RESET}: ${CYAN}${imgPath}${RESET} ` +
+              `${DIM}(${pendingImages.length} pending — send your message to include it)${RESET}\n\n`,
+            );
+          } catch {
+            process.stdout.write(`${RED}  error: cannot read image file "${imgPath}"${RESET}\n\n`);
+          }
+          continue;
+        }
+
+        if (trimmed === "/images") {
+          if (pendingImages.length === 0) {
+            process.stdout.write(`${DIM}  no images staged${RESET}\n\n`);
+          } else {
+            process.stdout.write(`${DIM}  ${pendingImages.length} image(s) staged for next message${RESET}\n\n`);
+          }
+          continue;
+        }
+
+        if (trimmed === "/help") {
+          process.stdout.write(
+            `${DIM}  /clear           — clear conversation history (keep system prompt)\n` +
+            `  /history         — print all messages in the conversation\n` +
+            `  /image <path>    — stage an image file for the next message\n` +
+            `  /images          — show count of staged images\n` +
+            `  /help            — show this help\n` +
+            `  exit             — end the session\n\n${RESET}`,
+          );
+          continue;
+        }
+
+        // ── Send message (with any staged images) ─────────────────────────
+        const userMsg = buildUserMessage(trimmed, pendingImages);
+        const imgNote = pendingImages.length > 0 ? ` ${DIM}[${pendingImages.length} img]${RESET}` : "";
+        pendingImages = []; // consume staged images
+
+        history.push(userMsg);
+        process.stdout.write(`\n${BOLD}${GREEN}Assistant:${RESET}${imgNote} `);
+
+        let result: { text: string; promptTokens: number; completionTokens: number; nCtx: number; sessionId: number };
+        try {
+          result = await streamTurn(
+            history as Array<{ role: string; content: string }>,
+            120_000,
+            sessionId || undefined,
+          );
+        } catch (e: any) {
+          const diagnosed = classifyLlmError(e.message ?? String(e));
+          process.stdout.write(`\n${RED}Error: ${diagnosed}${RESET}\n\n`);
+          history.pop(); // remove the user message so history stays consistent
+          continue;
+        }
+
+        // Track the session_id so subsequent turns stay in the same chat session.
+        if (result.sessionId > 0) sessionId = result.sessionId;
+
+        history.push({ role: "assistant", content: result.text });
+        turnCount++;
+        totalPrompt     += result.promptTokens;
+        totalCompletion += result.completionTokens;
+
+        process.stdout.write(
+          `${DIM}  [${result.promptTokens}+${result.completionTokens} tokens, n_ctx=${result.nCtx}, session=${sessionId}]${RESET}\n\n`,
+        );
+      }
+
+      // Session summary
+      rl.close();
+      if (turnCount > 0) {
+        const sidNote = sessionId > 0 ? `, session #${sessionId} (persisted)` : "";
+        process.stdout.write(
+          `${DIM}─────────────────────────────────────────────────────────────\n` +
+          `  session ended — ${turnCount} turn(s), ` +
+          `${totalPrompt} prompt + ${totalCompletion} completion tokens${sidNote}\n${RESET}\n`,
+        );
+      } else {
+        process.stdout.write(`${DIM}  (no messages sent)${RESET}\n`);
+      }
+      break;
+    }
+
+    // ── add ───────────────────────────────────────────────────────────────
+    case "add": {
+      // Supports two forms:
+      //   llm add <repo> <filename>          — explicit repo + filename
+      //   llm add <repo>/<filename>          — combined (split on last /)
+      //   llm add <url>                      — full HF URL
+      let repo: string;
+      let filename: string;
+      const raw = args.text;
+      const addUsage =
+        "usage: npx neuroskill llm add <repo> <filename> [--mmproj <file>]\n" +
+        "       npx neuroskill llm add <hf-url> [--mmproj <file>]\n\n" +
+        "  Examples:\n" +
+        "    llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf\n" +
+        "    llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf --mmproj mmproj-Phi-4-mini-reasoning-BF16.gguf\n" +
+        "    llm add https://huggingface.co/bartowski/Phi-4-mini-reasoning-GGUF/blob/main/Phi-4-mini-reasoning-Q4_K_M.gguf";
+      if (!raw) printError(addUsage);
+
+      if (args.body) {
+        // Two positional args: repo + filename
+        repo = raw!;
+        filename = args.body;
+      } else if (raw!.startsWith("http://") || raw!.startsWith("https://")) {
+        // Full HF URL: https://huggingface.co/<org>/<repo>/blob/main/<filename>
+        // or          https://huggingface.co/<org>/<repo>/resolve/main/<filename>
+        const urlMatch = raw!.match(/huggingface\.co\/([^/]+\/[^/]+)\/(?:blob|resolve)\/[^/]+\/(.+?)(?:\?.*)?$/);
+        if (!urlMatch) printError(
+          "could not parse HuggingFace URL. Expected format:\n" +
+          "  https://huggingface.co/<org>/<repo>/blob/main/<filename>"
+        );
+        repo = urlMatch![1];
+        filename = decodeURIComponent(urlMatch![2]);
+      } else {
+        printError(addUsage);
+      }
+
+      const mmproj = args.mmproj || undefined;
+      const mmNote = mmproj ? ` + mmproj ${CYAN}${mmproj}${RESET}` : "";
+      print(`${BOLD}🤖 llm add${RESET} ${CYAN}${repo!}${RESET} / ${CYAN}${filename!}${RESET}${mmNote}`);
+      const payload: Record<string, unknown> = { command: "llm_add_model", repo: repo!, filename: filename!, download: true };
+      if (mmproj) payload.mmproj = mmproj;
+      const r = await send(payload as { command: string; [k: string]: unknown });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_add_model failed"); }
+      print(`  ${GREEN}✓${RESET} added ${CYAN}${r.filename}${RESET} from ${DIM}${r.repo}${RESET}`);
+      if (r.mmproj) print(`  ${GREEN}✓${RESET} mmproj ${CYAN}${r.mmproj}${RESET}`);
+      print(`  ${DIM}download started — poll with: llm downloads${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── select ─────────────────────────────────────────────────────────────
+    case "select": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm select <filename>");
+      print(`${BOLD}🤖 llm select${RESET} ${CYAN}${filename}${RESET}`);
+      const r = await send({ command: "llm_select_model", filename });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_select_model failed"); }
+      print(`  ${GREEN}✓${RESET} active model:  ${CYAN}${r.active_model}${RESET}`);
+      if (r.active_mmproj) print(`  active mmproj: ${CYAN}${r.active_mmproj}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── mmproj ───────────────────────────────────────────────────────────────
+    case "mmproj": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm mmproj <filename|none>");
+      const actual = filename!.toLowerCase() === "none" ? "" : filename!;
+      print(`${BOLD}🤖 llm mmproj${RESET} ${CYAN}${filename}${RESET}`);
+      const r = await send({ command: "llm_select_mmproj", filename: actual });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_select_mmproj failed"); }
+      print(`  ${GREEN}✓${RESET} active mmproj: ${CYAN}${r.active_mmproj || "(none)"}${RESET}`);
+      print(`  active model:  ${CYAN}${r.active_model || "(none)"}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── autoload-mmproj ──────────────────────────────────────────────────────
+    case "autoload-mmproj": {
+      const val = args.text?.toLowerCase();
+      if (!val || !["on", "off", "true", "false", "1", "0"].includes(val)) {
+        printError("usage: npx neuroskill llm autoload-mmproj <on|off>");
+      }
+      const enabled = ["on", "true", "1"].includes(val!);
+      print(`${BOLD}🤖 llm autoload-mmproj${RESET} ${enabled ? GREEN + "on" : GRAY + "off"}${RESET}`);
+      const r = await send({ command: "llm_set_autoload_mmproj", enabled });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_set_autoload_mmproj failed"); }
+      print(`  ${GREEN}✓${RESET} autoload_mmproj = ${enabled ? "on" : "off"}`);
+      printResult(r);
+      break;
+    }
+
+    // ── pause ────────────────────────────────────────────────────────────────
+    case "pause": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm pause <filename>");
+      print(`${BOLD}🤖 llm pause${RESET} ${CYAN}${filename}${RESET}`);
+      const r = await send({ command: "llm_pause_download", filename });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_pause_download failed"); }
+      print(`  ${GREEN}✓${RESET} pause signalled for ${CYAN}${r.filename}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── resume ───────────────────────────────────────────────────────────────
+    case "resume": {
+      const filename = args.text;
+      if (!filename) printError("usage: npx neuroskill llm resume <filename>");
+      print(`${BOLD}🤖 llm resume${RESET} ${CYAN}${filename}${RESET}`);
+      const r = await send({ command: "llm_resume_download", filename });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_resume_download failed"); }
+      print(`  ${GREEN}✓${RESET} resume signalled for ${CYAN}${r.filename}${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── downloads ────────────────────────────────────────────────────────────
+    case "downloads": {
+      print(`${BOLD}🤖 llm downloads${RESET}`);
+      const r = await send({ command: "llm_downloads" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_downloads failed"); }
+      const items: any[] = r.downloads ?? [];
+      if (items.length === 0) {
+        print(`  ${GRAY}(no downloads)${RESET}`);
+      } else {
+        for (const d of items) {
+          const stateColor = d.state === "downloaded" ? GREEN
+            : d.state === "downloading" ? YELLOW
+            : d.state === "paused"      ? BLUE
+            : d.state === "failed"      ? RED
+            : d.state === "cancelled"   ? GRAY
+            : GRAY;
+          const pct = d.state === "downloading" ? ` ${Math.round((d.progress ?? 0) * 100)}%` : "";
+          const sizeNote = d.size_gb ? ` ${DIM}(${d.size_gb.toFixed(1)} GB)${RESET}` : "";
+          print(`  ${stateColor}${(d.state ?? "unknown").padEnd(13)}${RESET}${pct}  ${CYAN}${d.filename}${RESET}${sizeNote}`);
+          if (d.status_msg) print(`                 ${DIM}${d.status_msg}${RESET}`);
+        }
+      }
+      print(`  ${DIM}${items.length} download(s)${RESET}`);
+      printResult(r);
+      break;
+    }
+
+    // ── refresh ──────────────────────────────────────────────────────────────
+    case "refresh": {
+      print(`${BOLD}🤖 llm refresh${RESET}`);
+      const r = await send({ command: "llm_refresh_catalog" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_refresh_catalog failed"); }
+      print(`  ${GREEN}✓${RESET} catalog refreshed`);
+      printResult(r);
+      break;
+    }
+
+    // ── fit ──────────────────────────────────────────────────────────────────
+    case "fit": {
+      print(`${BOLD}🤖 llm hardware fit${RESET}`);
+      const r = await send({ command: "llm_hardware_fit" });
+      if (!r.ok) { printResult(r); printError(r.error ?? "llm_hardware_fit failed"); }
+      const fits: any[] = r.fits ?? [];
+      if (fits.length === 0) {
+        print(`  ${GRAY}(no models in catalog)${RESET}`);
+      } else {
+        // Optional filter by filename
+        const filtered = args.text
+          ? fits.filter((f: any) => f.filename.toLowerCase().includes(args.text!.toLowerCase()))
+          : fits;
+        const fitColor = (level: string) =>
+          level === "perfect" ? GREEN
+          : level === "good" ? GREEN
+          : level === "marginal" ? YELLOW
+          : RED;
+        for (const f of filtered) {
+          print(`  ${fitColor(f.fit_level)}${f.fit_level.padEnd(10)}${RESET} ${CYAN}${f.run_mode.padEnd(8)}${RESET} ${f.memory_required_gb?.toFixed(1) ?? "?"}GB  ${CYAN}${f.filename}${RESET}`);
+        }
+        print(`  ${DIM}${filtered.length} model(s)${RESET}`);
+      }
+      printResult(r);
+      break;
+    }
+
+    default:
+      printError(`unknown llm subcommand: "${sub}". Valid: status start stop catalog add select mmproj autoload-mmproj download pause resume cancel delete downloads refresh fit logs chat`);
+  }
+}
+
 async function cmdRaw(rawJson: string): Promise<void> {
   let cmd: any;
   try {
@@ -2935,7 +5362,7 @@ async function cmdRaw(rawJson: string): Promise<void> {
  * CLI entry point.
  *
  * 1. Parse command-line arguments.
- * 2. Discover the Skill WebSocket server (mDNS → lsof → explicit port).
+ * 2. Discover the NeuroSkill™ WebSocket server (mDNS → lsof → explicit port).
  * 3. Connect via WebSocket (up to 3 retries).
  * 4. Dispatch to the appropriate command handler.
  * 5. Close the socket and exit.
@@ -3016,12 +5443,33 @@ async function main(): Promise<void> {
       case "timer":
         await cmdTimer();
         break;
+      case "sleep-schedule":
+        await cmdSleepSchedule(args);
+        break;
+      case "health":
+        await cmdHealth(args);
+        break;
+      case "dnd":
+        await cmdDnd(args);
+        break;
       case "label":
         if (!args.text) printError("usage: npx neuroskill label \"your annotation text\"");
         await cmdLabel(args);
         break;
       case "search-labels":
         await cmdSearchLabels(args);
+        break;
+      case "search-images":
+        await cmdSearchImages(args);
+        break;
+      case "screenshots-around":
+        await cmdScreenshotsAround(args);
+        break;
+      case "screenshots-for-eeg":
+        await cmdScreenshotsForEeg(args);
+        break;
+      case "eeg-for-screenshots":
+        await cmdEegForScreenshots(args);
         break;
       case "interactive":
         await cmdInteractive(args);
@@ -3046,6 +5494,12 @@ async function main(): Promise<void> {
           );
         }
         await cmdListen(args.seconds ?? 5);
+        break;
+      case "hooks":
+        await cmdHooks(args);
+        break;
+      case "llm":
+        await cmdLlm(args);
         break;
       case "raw":
         if (!args.rawJson) printError("usage: npx neuroskill raw '{\"command\":\"status\"}'");

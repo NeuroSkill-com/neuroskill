@@ -1,7 +1,7 @@
 # Skill CLI — Complete Reference
 
 Skill exposes a real-time EEG analysis API through a local WebSocket server and an HTTP tunnel.
-The `cli.ts` script is the fastest way to query it from a terminal, shell script, or any
+The `neuroskill` CLI is the fastest way to query it from a terminal, shell script, or any
 automation pipeline.
 
 ---
@@ -68,7 +68,7 @@ Skill runs a local server (auto-discovered via mDNS or `lsof`).  All commands wo
 
 ```
 # Force WebSocket:
-node cli.ts status --ws
+npx neuroskill status --ws
 
 # Direct WebSocket from any language (wscat example):
 wscat -c ws://127.0.0.1:8375
@@ -85,7 +85,7 @@ wscat -c ws://127.0.0.1:8375
 
 ```bash
 # Force HTTP:
-node cli.ts status --http
+npx neuroskill status --http
 
 # curl equivalent of every CLI command:
 curl -s -X POST http://127.0.0.1:8375/ \
@@ -112,7 +112,7 @@ The CLI finds the port automatically via:
 3. `lsof` / `pgrep` fallback (probes each TCP LISTEN port)
 
 ```bash
-node cli.ts status --port 62853    # skip discovery entirely
+npx neuroskill status --port 62853    # skip discovery entirely
 ```
 
 ---
@@ -124,16 +124,16 @@ node cli.ts status --port 62853    # skip discovery entirely
 npm install
 
 # Snapshot of everything:
-node cli.ts status
+npx neuroskill status
 
 # Pipe-friendly JSON output:
-node cli.ts status --json | jq '.scores'
+npx neuroskill status --json | jq '.scores'
 
 # Print full help with examples:
-node cli.ts --help
+npx neuroskill --help
 ```
 
-> **Aliases:** `node cli.ts`, `npx tsx cli.ts`, and `./cli.ts` (after `chmod +x`) all work.
+> **Aliases:** `npx neuroskill` and `npx tsx cli.ts` both work.
 
 ---
 
@@ -148,9 +148,9 @@ The underlying raw JSON response is **not printed** — it is discarded after th
 summary is rendered.
 
 ```bash
-node cli.ts status        # colored summary, no JSON
-node cli.ts session 0     # trend table, no JSON
-node cli.ts sleep         # stage counts, no JSON
+npx neuroskill status        # colored summary, no JSON
+npx neuroskill session 0     # trend table, no JSON
+npx neuroskill sleep         # stage counts, no JSON
 ```
 
 This is the fastest way to read results at a glance, but data that the summary
@@ -168,11 +168,11 @@ Informational lines (transport, connection, mDNS discovery) go to **stderr** and
 never pollute the JSON stream.
 
 ```bash
-node cli.ts status --json                            # full JSON, no summary
-node cli.ts status --json | jq '.scores.focus'       # pipe to jq
-node cli.ts sleep  --json | jq '.summary'
-node cli.ts search --json | jq '.result.results[0].neighbors'
-node cli.ts umap   --json | jq '.result.points | length'
+npx neuroskill status --json                            # full JSON, no summary
+npx neuroskill status --json | jq '.scores.focus'       # pipe to jq
+npx neuroskill sleep  --json | jq '.summary'
+npx neuroskill search --json | jq '.result.results[0].neighbors'
+npx neuroskill umap   --json | jq '.result.points | length'
 ```
 
 Use `--json` whenever you need to pipe output to another tool, parse it in a
@@ -186,11 +186,11 @@ Both `print()` and `printResult()` fire. The human-readable summary prints first
 then the complete colorized JSON response is appended below it.
 
 ```bash
-node cli.ts status       --full   # summary + full colorized JSON
-node cli.ts session 0    --full   # trend table + raw first/second/trends objects
-node cli.ts sleep        --full   # stage counts + full epochs[] array
-node cli.ts umap         --full   # cluster analysis + full points[] array
-node cli.ts search       --full   # match summary + all neighbors for every query epoch
+npx neuroskill status       --full   # summary + full colorized JSON
+npx neuroskill session 0    --full   # trend table + raw first/second/trends objects
+npx neuroskill sleep        --full   # stage counts + full epochs[] array
+npx neuroskill umap         --full   # cluster analysis + full points[] array
+npx neuroskill search       --full   # match summary + all neighbors for every query epoch
 ```
 
 `--full` is the inspection mode: use it when you want to see which exact fields the
@@ -218,9 +218,9 @@ summary**. It is only visible with `--full` (colorized) or `--json` (plain).
 | `history.today_vs_avg` | object | Per-metric today-vs-7-day-avg comparison table (metric, today, avg_7d, delta_pct, direction) |
 
 ```bash
-node cli.ts status --json | jq '.history.today_vs_avg'
-node cli.ts status --json | jq '.calibration.actions'
-node cli.ts status --json | jq '.labels.recent'
+npx neuroskill status --json | jq '.history.today_vs_avg'
+npx neuroskill status --json | jq '.calibration.actions'
+npx neuroskill status --json | jq '.labels.recent'
 ```
 
 #### `session`
@@ -233,10 +233,10 @@ node cli.ts status --json | jq '.labels.recent'
 | `metrics` | object | All ~50 metric fields — the summary only prints a curated subset |
 
 ```bash
-node cli.ts session 0 --json | jq '.metrics'          # all metric averages
-node cli.ts session 0 --json | jq '.trends'           # all trend directions
-node cli.ts session 0 --json | jq '{f1: .first.focus, f2: .second.focus}'
-node cli.ts session 0 --json | jq '[.trends | to_entries[] | select(.value == "up") | .key]'
+npx neuroskill session 0 --json | jq '.metrics'          # all metric averages
+npx neuroskill session 0 --json | jq '.trends'           # all trend directions
+npx neuroskill session 0 --json | jq '{f1: .first.focus, f2: .second.focus}'
+npx neuroskill session 0 --json | jq '[.trends | to_entries[] | select(.value == "up") | .key]'
 ```
 
 #### `sessions`
@@ -246,7 +246,7 @@ node cli.ts session 0 --json | jq '[.trends | to_entries[] | select(.value == "u
 | `sessions[]` | array | Raw session objects — the summary formats them into a table but the JSON contains the same data |
 
 ```bash
-node cli.ts sessions --json | jq '.sessions[0]'
+npx neuroskill sessions --json | jq '.sessions[0]'
 # → { "day": "20260224", "start_utc": 1740412800, "end_utc": 1740415510, "n_epochs": 541 }
 ```
 
@@ -259,10 +259,10 @@ node cli.ts sessions --json | jq '.sessions[0]'
 | `result.analysis.top_days` | array | `[["YYYYMMDD", count], …]` |
 
 ```bash
-node cli.ts search --json | jq '.result.results | length'          # query epoch count
-node cli.ts search --json | jq '.result.results[0].neighbors'      # all neighbors for epoch 0
-node cli.ts search --json | jq '[.result.results[].neighbors[]] | sort_by(.distance) | .[0]'
-node cli.ts search --json | jq '.result.analysis.temporal_distribution'
+npx neuroskill search --json | jq '.result.results | length'          # query epoch count
+npx neuroskill search --json | jq '.result.results[0].neighbors'      # all neighbors for epoch 0
+npx neuroskill search --json | jq '[.result.results[].neighbors[]] | sort_by(.distance) | .[0]'
+npx neuroskill search --json | jq '.result.analysis.temporal_distribution'
 ```
 
 #### `compare`
@@ -276,11 +276,11 @@ node cli.ts search --json | jq '.result.analysis.temporal_distribution'
 | `umap` | object | Enqueued job info: `job_id`, `estimated_secs`, `n_a`, `n_b` |
 
 ```bash
-node cli.ts compare --json | jq '.a'                         # all metrics for A
-node cli.ts compare --json | jq '.b'                         # all metrics for B
-node cli.ts compare --json | jq '.insights.deltas'           # every metric delta
-node cli.ts compare --json | jq '.insights.deltas | to_entries | sort_by(.value.pct) | reverse'
-node cli.ts compare --json | jq '.umap.job_id'               # use with umap --json
+npx neuroskill compare --json | jq '.a'                         # all metrics for A
+npx neuroskill compare --json | jq '.b'                         # all metrics for B
+npx neuroskill compare --json | jq '.insights.deltas'           # every metric delta
+npx neuroskill compare --json | jq '.insights.deltas | to_entries | sort_by(.value.pct) | reverse'
+npx neuroskill compare --json | jq '.umap.job_id'               # use with umap --json
 ```
 
 #### `sleep`
@@ -290,10 +290,10 @@ node cli.ts compare --json | jq '.umap.job_id'               # use with umap --j
 | `epochs[]` | array | Per-epoch classification: `{ utc, stage, rel_delta, rel_theta, rel_alpha, rel_beta }` for every 5-second window. Can be thousands of entries for a full night. |
 
 ```bash
-node cli.ts sleep --json | jq '.epochs | length'             # total epochs
-node cli.ts sleep --json | jq '.epochs[0]'                   # first epoch
-node cli.ts sleep --json | jq '[.epochs[] | select(.stage == 3)] | length'  # N3 epochs
-node cli.ts sleep --json | jq '[.epochs[] | {utc: .utc, stage: .stage}]'    # hypnogram data
+npx neuroskill sleep --json | jq '.epochs | length'             # total epochs
+npx neuroskill sleep --json | jq '.epochs[0]'                   # first epoch
+npx neuroskill sleep --json | jq '[.epochs[] | select(.stage == 3)] | length'  # N3 epochs
+npx neuroskill sleep --json | jq '[.epochs[] | {utc: .utc, stage: .stage}]'    # hypnogram data
 ```
 
 #### `umap`
@@ -303,11 +303,11 @@ node cli.ts sleep --json | jq '[.epochs[] | {utc: .utc, stage: .stage}]'    # hy
 | `result.points[]` | array | 3D coordinates for every embedding epoch: `{ x, y, z, session, utc, label? }`. Typically 500–2000+ entries. |
 
 ```bash
-node cli.ts umap --json | jq '.result.points | length'
-node cli.ts umap --json | jq '.result.points[0]'
+npx neuroskill umap --json | jq '.result.points | length'
+npx neuroskill umap --json | jq '.result.points[0]'
 # → { "x": 1.23, "y": -0.45, "z": 2.01, "session": "A", "utc": 1740380105 }
-node cli.ts umap --json | jq '[.result.points[] | select(.session == "B")]'
-node cli.ts umap --json | jq '[.result.points[] | select(.label != null)]'  # labeled points only
+npx neuroskill umap --json | jq '[.result.points[] | select(.session == "B")]'
+npx neuroskill umap --json | jq '[.result.points[] | select(.label != null)]'  # labeled points only
 ```
 
 #### `search-labels`
@@ -318,9 +318,9 @@ node cli.ts umap --json | jq '[.result.points[] | select(.label != null)]'  # la
 | `results[].context` | string | Long-context string (if set) — only a truncated preview is shown in the summary |
 
 ```bash
-node cli.ts search-labels "deep focus" --json | jq '.results[0].eeg_metrics'
-node cli.ts search-labels "stress" --json | jq '[.results[].eeg_metrics.tbr]'
-node cli.ts search-labels "meditation" --json | jq '.results[0].context'
+npx neuroskill search-labels "deep focus" --json | jq '.results[0].eeg_metrics'
+npx neuroskill search-labels "stress" --json | jq '[.results[].eeg_metrics.tbr]'
+npx neuroskill search-labels "meditation" --json | jq '.results[0].context'
 ```
 
 #### `interactive`
@@ -333,12 +333,12 @@ node cli.ts search-labels "meditation" --json | jq '.results[0].context'
 | `nodes[].eeg_metrics` | object | Full EEG metrics for `text_label` nodes — the summary shows 5 fields; JSON has all |
 
 ```bash
-node cli.ts interactive "deep focus" --json | jq '.nodes | length'
-node cli.ts interactive "meditation" --json | jq '.edges | map(.kind) | unique'
-node cli.ts interactive "anxiety" --json | jq '[.nodes[] | select(.kind == "text_label") | .text]'
-node cli.ts interactive "focus" --dot | dot -Tsvg > graph.svg   # visualize with graphviz
-node cli.ts interactive "stress" --dot | dot -Tpng > graph.png
-node cli.ts interactive "relaxed" --json | jq '.dot' -r | dot -Tsvg > graph.svg  # same via --json
+npx neuroskill interactive "deep focus" --json | jq '.nodes | length'
+npx neuroskill interactive "meditation" --json | jq '.edges | map(.kind) | unique'
+npx neuroskill interactive "anxiety" --json | jq '[.nodes[] | select(.kind == "text_label") | .text]'
+npx neuroskill interactive "focus" --dot | dot -Tsvg > graph.svg   # visualize with graphviz
+npx neuroskill interactive "stress" --dot | dot -Tpng > graph.png
+npx neuroskill interactive "relaxed" --json | jq '.dot' -r | dot -Tsvg > graph.svg  # same via --json
 ```
 
 ---
@@ -354,11 +354,11 @@ The entire JSON confirmation from the server is suppressed in default mode.
 | `command` | string | Echo of the command name (`"notify"`) |
 
 ```bash
-node cli.ts notify "done" --full
+npx neuroskill notify "done" --full
 # default output:  ⚡ notify "done"
 # --full appends:  { "command": "notify", "ok": true }
 
-node cli.ts notify "done" --json
+npx neuroskill notify "done" --json
 # → { "command": "notify", "ok": true }
 ```
 
@@ -367,7 +367,7 @@ or `--json` is only useful when you need the confirmation in a script:
 
 ```bash
 # Verify notification was delivered before continuing a script:
-node cli.ts notify "build finished" --json | jq -e '.ok' > /dev/null \
+npx neuroskill notify "build finished" --json | jq -e '.ok' > /dev/null \
   && echo "notification sent" || echo "notification failed"
 ```
 
@@ -385,7 +385,7 @@ profiles with their actions, durations, and settings** — is consumed internall
 
 ```bash
 # See all profiles and their full action sequences:
-node cli.ts raw '{"command":"list_calibrations"}' --json
+npx neuroskill raw '{"command":"list_calibrations"}' --json
 # or:
 curl -s -X POST http://127.0.0.1:8375/ \
   -H "Content-Type: application/json" \
@@ -423,21 +423,21 @@ The actual calibration trigger response is suppressed in default mode, just like
 | `command` | string | Echo of the command name (`"run_calibration"`) |
 
 ```bash
-node cli.ts calibrate --full
+npx neuroskill calibrate --full
 # default output:
 #   ⚡ calibrate
 #   profile: Eyes Open/Closed  (a1b2c3d4-…)
 # --full appends:
 #   { "command": "run_calibration", "ok": true }
 
-node cli.ts calibrate --json
+npx neuroskill calibrate --json
 # → { "command": "run_calibration", "ok": true }
 
 # Check all available profile names without starting calibration:
-node cli.ts raw '{"command":"list_calibrations"}' --json | jq '[.profiles[].name]'
+npx neuroskill raw '{"command":"list_calibrations"}' --json | jq '[.profiles[].name]'
 
 # Verify calibration started in a script:
-node cli.ts calibrate --profile "Eyes Open" --json | jq -e '.ok' > /dev/null \
+npx neuroskill calibrate --profile "Eyes Open" --json | jq -e '.ok' > /dev/null \
   && echo "calibration started" || echo "failed — is a Muse connected?"
 ```
 
@@ -454,16 +454,16 @@ The server confirmation is suppressed.
 | `command` | string | Echo of the command name (`"timer"`) |
 
 ```bash
-node cli.ts timer --full
+npx neuroskill timer --full
 # default output:  ⚡ timer
 # --full appends:  { "command": "timer", "ok": true }
 
-node cli.ts timer --json
+npx neuroskill timer --json
 # → { "command": "timer", "ok": true }
 
 # Use in a script after a calibration block:
-node cli.ts calibrate --json | jq -e '.ok' > /dev/null \
-  && node cli.ts timer --json | jq -e '.ok' > /dev/null \
+npx neuroskill calibrate --json | jq -e '.ok' > /dev/null \
+  && npx neuroskill timer --json | jq -e '.ok' > /dev/null \
   && echo "calibration + timer both started"
 ```
 
@@ -476,8 +476,8 @@ node cli.ts calibrate --json | jq -e '.ok' > /dev/null \
 | events array | array | Full array of every raw broadcast event received. The summary only prints `event_type × count`; `--full` appends every packet. |
 
 ```bash
-node cli.ts listen --seconds 10 --json | jq '[.[] | select(.event == "scores")]'
-node cli.ts listen --seconds 5  --json | jq '.[0]'   # first event in full
+npx neuroskill listen --seconds 10 --json | jq '[.[] | select(.event == "scores")]'
+npx neuroskill listen --seconds 5  --json | jq '.[0]'   # first event in full
 ```
 
 ---
@@ -513,19 +513,19 @@ Poll it periodically from any script or external tool to react to EEG state chan
 
 ```bash
 # One-shot snapshot:
-node cli.ts status --json
+npx neuroskill status --json
 
 # Poll every 5 seconds and print focus score:
 while true; do
-  node cli.ts status --json | jq '.scores.focus'
+  npx neuroskill status --json | jq '.scores.focus'
   sleep 5
 done
 
 # Alert when focus drops below 0.4:
 while true; do
-  FOCUS=$(node cli.ts status --json | jq '.scores.focus')
+  FOCUS=$(npx neuroskill status --json | jq '.scores.focus')
   if (( $(echo "$FOCUS < 0.4" | bc -l) )); then
-    node cli.ts notify "Focus dropped" "Current: $FOCUS"
+    npx neuroskill notify "Focus dropped" "Current: $FOCUS"
   fi
   sleep 10
 done
@@ -628,14 +628,14 @@ Full snapshot: device state, session, signal quality, scores, bands, embeddings,
 sleep summary, and recording history.
 
 ```bash
-node cli.ts status
-node cli.ts status --json
-node cli.ts status --json | jq '.scores.focus'
-node cli.ts status --json | jq '.scores.bands'
-node cli.ts status --json | jq '.device.battery'
-node cli.ts status --json | jq '.signal_quality'
-node cli.ts status --json | jq '.sleep'
-node cli.ts status --json | jq '.history.current_streak_days'
+npx neuroskill status
+npx neuroskill status --json
+npx neuroskill status --json | jq '.scores.focus'
+npx neuroskill status --json | jq '.scores.bands'
+npx neuroskill status --json | jq '.device.battery'
+npx neuroskill status --json | jq '.signal_quality'
+npx neuroskill status --json | jq '.sleep'
+npx neuroskill status --json | jq '.history.current_streak_days'
 ```
 
 **HTTP:**
@@ -653,13 +653,13 @@ Full metric breakdown for a single recording session, with first-half → second
 Index `0` = most recent, `1` = previous, and so on.
 
 ```bash
-node cli.ts session          # most recent session (default: 0)
-node cli.ts session 0        # same
-node cli.ts session 1        # previous session
-node cli.ts session 2        # two sessions ago
-node cli.ts session --json
-node cli.ts session 1 --json | jq '.metrics.focus'
-node cli.ts session 0 --json | jq '{focus: .metrics.focus, hr: .metrics.hr, trend: .trends.focus}'
+npx neuroskill session          # most recent session (default: 0)
+npx neuroskill session 0        # same
+npx neuroskill session 1        # previous session
+npx neuroskill session 2        # two sessions ago
+npx neuroskill session --json
+npx neuroskill session 1 --json | jq '.metrics.focus'
+npx neuroskill session 0 --json | jq '{focus: .metrics.focus, hr: .metrics.hr, trend: .trends.focus}'
 ```
 
 **HTTP (two requests):**
@@ -736,12 +736,12 @@ List every recorded session across all days.  Sessions are contiguous embedding 
 (gap threshold: 120 seconds between epochs).
 
 ```bash
-node cli.ts sessions
-node cli.ts sessions --json
-node cli.ts sessions --json | jq '.sessions | length'
-node cli.ts sessions --json | jq '.sessions[0]'
-node cli.ts sessions --json | jq '[.sessions[] | {day, dur: (.end_utc - .start_utc)}]'
-node cli.ts sessions --trends              # show per-session metric trends
+npx neuroskill sessions
+npx neuroskill sessions --json
+npx neuroskill sessions --json | jq '.sessions | length'
+npx neuroskill sessions --json | jq '.sessions[0]'
+npx neuroskill sessions --json | jq '[.sessions[] | {day, dur: (.end_utc - .start_utc)}]'
+npx neuroskill sessions --trends              # show per-session metric trends
 ```
 
 **HTTP:**
@@ -787,7 +787,7 @@ curl -s -X POST http://127.0.0.1:8375/ \
 > **Getting Unix timestamps for other commands:**
 > ```bash
 > # Get start/end of the most recent session:
-> node cli.ts sessions --json | jq '{start: .sessions[0].start_utc, end: .sessions[0].end_utc}'
+> npx neuroskill sessions --json | jq '{start: .sessions[0].start_utc, end: .sessions[0].end_utc}'
 > ```
 
 ---
@@ -798,13 +798,13 @@ Create a timestamped text annotation on the current EEG moment.
 Labels are stored in the database, shown in the dashboard, and searchable via `search-labels`.
 
 ```bash
-node cli.ts label "meditation start"
-node cli.ts label "eyes closed"
-node cli.ts label "feeling anxious"
-node cli.ts label "coffee just finished"
-node cli.ts label "task switch: coding → email"
-node cli.ts label "phone notification distracted me"
-node cli.ts label --json "focus block start"   # just print the label_id
+npx neuroskill label "meditation start"
+npx neuroskill label "eyes closed"
+npx neuroskill label "feeling anxious"
+npx neuroskill label "coffee just finished"
+npx neuroskill label "task switch: coding → email"
+npx neuroskill label "phone notification distracted me"
+npx neuroskill label --json "focus block start"   # just print the label_id
 ```
 
 **HTTP:**
@@ -833,12 +833,12 @@ Semantic (vector) search across all your EEG annotations.
 The query is embedded and compared against the label HNSW index.
 
 ```bash
-node cli.ts search-labels "deep focus"
-node cli.ts search-labels "relaxed meditation" --k 10
-node cli.ts search-labels "anxiety" --mode context
-node cli.ts search-labels "flow state" --mode both --k 5
-node cli.ts search-labels "creative work" --json | jq '.results[].text'
-node cli.ts search-labels "morning routine" --json | jq '.results[] | {text, sim: .similarity}'
+npx neuroskill search-labels "deep focus"
+npx neuroskill search-labels "relaxed meditation" --k 10
+npx neuroskill search-labels "anxiety" --mode context
+npx neuroskill search-labels "flow state" --mode both --k 5
+npx neuroskill search-labels "creative work" --json | jq '.results[].text'
+npx neuroskill search-labels "morning routine" --json | jq '.results[] | {text, sim: .similarity}'
 ```
 
 **Modes:**
@@ -932,34 +932,34 @@ Four output formats — choose exactly one:
 
 ```bash
 # Default summary:
-node cli.ts interactive "deep focus"
+npx neuroskill interactive "deep focus"
 
 # Tune the pipeline:
-node cli.ts interactive "meditation" --k-text 8 --k-eeg 8 --k-labels 5 --reach 15
+npx neuroskill interactive "meditation" --k-text 8 --k-eeg 8 --k-labels 5 --reach 15
 
 # Raw JSON — count nodes:
-node cli.ts interactive "flow state" --json | jq '.nodes | length'
+npx neuroskill interactive "flow state" --json | jq '.nodes | length'
 
 # Extract text_label texts:
-node cli.ts interactive "focus" --json | jq '[.nodes[] | select(.kind == "text_label") | .text]'
+npx neuroskill interactive "focus" --json | jq '[.nodes[] | select(.kind == "text_label") | .text]'
 
 # Extract EEG moment timestamps:
-node cli.ts interactive "anxiety" --json | jq '[.nodes[] | select(.kind == "eeg_point") | .timestamp_unix]'
+npx neuroskill interactive "anxiety" --json | jq '[.nodes[] | select(.kind == "eeg_point") | .timestamp_unix]'
 
 # Extract discovered nearby labels:
-node cli.ts interactive "stress" --json | jq '[.nodes[] | select(.kind == "found_label") | .text]'
+npx neuroskill interactive "stress" --json | jq '[.nodes[] | select(.kind == "found_label") | .text]'
 
 # Render graph as SVG (requires graphviz):
-node cli.ts interactive "deep focus" --dot | dot -Tsvg > graph.svg
+npx neuroskill interactive "deep focus" --dot | dot -Tsvg > graph.svg
 
 # Render graph as PNG:
-node cli.ts interactive "meditation" --dot | dot -Tpng > graph.png
+npx neuroskill interactive "meditation" --dot | dot -Tpng > graph.png
 
 # Pull DOT from JSON output instead:
-node cli.ts interactive "focus" --json | jq -r '.dot' | dot -Tsvg > graph.svg
+npx neuroskill interactive "focus" --json | jq -r '.dot' | dot -Tsvg > graph.svg
 
 # Full inspection (summary + full JSON):
-node cli.ts interactive "anxiety" --full
+npx neuroskill interactive "anxiety" --full
 ```
 
 **Pipeline parameters:**
@@ -1111,12 +1111,12 @@ Auto-range: when no `--start`/`--end` flags are given, the CLI automatically use
 most recent session and prints a `rerun:` line you can copy-paste.
 
 ```bash
-node cli.ts search                                     # auto: last session, k=5
-node cli.ts search --k 10                             # 10 nearest neighbors
-node cli.ts search --start 1740412800 --end 1740415500
-node cli.ts search --start 1740412800 --end 1740415500 --k 20
-node cli.ts search --json | jq '.result.results | length'
-node cli.ts search --json | jq '.result.results[0].neighbors[0]'
+npx neuroskill search                                     # auto: last session, k=5
+npx neuroskill search --k 10                             # 10 nearest neighbors
+npx neuroskill search --start 1740412800 --end 1740415500
+npx neuroskill search --start 1740412800 --end 1740415500 --k 20
+npx neuroskill search --json | jq '.result.results | length'
+npx neuroskill search --json | jq '.result.results[0].neighbors[0]'
 ```
 
 **HTTP:**
@@ -1131,7 +1131,7 @@ curl -s -X POST http://127.0.0.1:8375/ \
 ⚡ search
   range: 1740412800–1740415500 (auto: 2/24/2026 8:00 AM → 8:45 AM, 45m 0s)
   k: 5
-  rerun: node cli.ts search --start 1740412800 --end 1740415500 --k 5
+  rerun: npx neuroskill search --start 1740412800 --end 1740415500 --k 5
 
   Search Results
   query epochs: 541   searched days: 31   total matches: 2705   span: 744.3h
@@ -1208,14 +1208,14 @@ Also enqueues a 3D UMAP projection (use `umap` to get the spatial points).
 Auto-range: uses your last two sessions as A (older) and B (newer).
 
 ```bash
-node cli.ts compare                                    # auto: last 2 sessions
-node cli.ts compare --a-start 1740380100 --a-end 1740382665 \
+npx neuroskill compare                                    # auto: last 2 sessions
+npx neuroskill compare --a-start 1740380100 --a-end 1740382665 \
                     --b-start 1740412800 --b-end 1740415510
-node cli.ts compare --json
-node cli.ts compare --json | jq '{a_focus: .a.focus, b_focus: .b.focus}'
-node cli.ts compare --json | jq '.insights.deltas.focus'
-node cli.ts compare --json | jq '.insights.improved'
-node cli.ts compare --json | jq '.insights.declined'
+npx neuroskill compare --json
+npx neuroskill compare --json | jq '{a_focus: .a.focus, b_focus: .b.focus}'
+npx neuroskill compare --json | jq '.insights.deltas.focus'
+npx neuroskill compare --json | jq '.insights.improved'
+npx neuroskill compare --json | jq '.insights.declined'
 ```
 
 **HTTP:**
@@ -1234,7 +1234,7 @@ curl -s -X POST http://127.0.0.1:8375/ \
 ⚡ compare
   A: 1740380100–1740382665 (auto: 2/23/2026 2:30 PM → 3:12 PM, 42m 45s)
   B: 1740412800–1740415510 (auto: 2/24/2026 8:00 AM → 8:45 AM, 45m 10s)
-  rerun: node cli.ts compare --a-start 1740380100 --a-end 1740382665 ...
+  rerun: npx neuroskill compare --a-start 1740380100 --a-end 1740382665 ...
 
   Compare Insights  (513 vs 541 epochs)
 
@@ -1291,13 +1291,13 @@ Auto-range: all sessions from the last 24 hours.
 By index: `sleep 0` = most recent session, `sleep 1` = previous, etc.
 
 ```bash
-node cli.ts sleep                          # auto: last 24h of sessions
-node cli.ts sleep 0                        # most recent session's sleep data
-node cli.ts sleep 1                        # previous session
-node cli.ts sleep --start 1740380100 --end 1740415510
-node cli.ts sleep --json | jq '.summary'
-node cli.ts sleep --json | jq '.analysis'
-node cli.ts sleep --json | jq '.summary | {n3: .n3_epochs, rem: .rem_epochs}'
+npx neuroskill sleep                          # auto: last 24h of sessions
+npx neuroskill sleep 0                        # most recent session's sleep data
+npx neuroskill sleep 1                        # previous session
+npx neuroskill sleep --start 1740380100 --end 1740415510
+npx neuroskill sleep --json | jq '.summary'
+npx neuroskill sleep --json | jq '.analysis'
+npx neuroskill sleep --json | jq '.summary | {n3: .n3_epochs, rem: .rem_epochs}'
 ```
 
 **HTTP:**
@@ -1311,7 +1311,7 @@ curl -s -X POST http://127.0.0.1:8375/ \
 ```
 ⚡ sleep
   range: 1740380100–1740415510 (auto: 2/23/2026 2:30 PM → 2/24/2026 8:45 AM, 9h 50m)
-  rerun: node cli.ts sleep --start 1740380100 --end 1740415510
+  rerun: npx neuroskill sleep --start 1740380100 --end 1740415510
 
   Sleep Summary
   total: 1054 epochs (87 min)
@@ -1384,13 +1384,13 @@ Results are cached so re-running the same ranges is instant.
 Auto-range: last two sessions (same as `compare`).
 
 ```bash
-node cli.ts umap                           # auto: last 2 sessions
-node cli.ts umap --a-start 1740380100 --a-end 1740382665 \
+npx neuroskill umap                           # auto: last 2 sessions
+npx neuroskill umap --a-start 1740380100 --a-end 1740382665 \
                  --b-start 1740412800 --b-end 1740415510
-node cli.ts umap --json | jq '.result.points | length'
-node cli.ts umap --json | jq '.result.points[0]'
-node cli.ts umap --json | jq '[.result.points[] | select(.session == "A")] | length'
-node cli.ts umap --json | jq '.result.analysis.separation_score'
+npx neuroskill umap --json | jq '.result.points | length'
+npx neuroskill umap --json | jq '.result.points[0]'
+npx neuroskill umap --json | jq '[.result.points[] | select(.session == "A")] | length'
+npx neuroskill umap --json | jq '.result.analysis.separation_score'
 ```
 
 **HTTP (two requests — enqueue then poll):**
@@ -1414,7 +1414,7 @@ done
 ⚡ umap
   A: 1740380100–1740382665 (auto: 2/23/2026 2:30 PM → 3:12 PM, 42m 45s)
   B: 1740412800–1740415510 (auto: 2/24/2026 8:00 AM → 8:45 AM, 45m 10s)
-  rerun: node cli.ts umap --a-start 1740380100 ...
+  rerun: npx neuroskill umap --a-start 1740380100 ...
 
 enqueued job_id=5  n_a=513  n_b=541  est=14s
 ████████████░░░░░░░░░░░░░░░░░░ 40%  epoch 80/200  42ms/ep  ~5s left
@@ -1464,11 +1464,11 @@ Events include raw EEG packets, PPG, IMU, scores, and label-created notification
 > Requires WebSocket (`--http` mode has no push streaming).
 
 ```bash
-node cli.ts listen                         # 5 seconds (default)
-node cli.ts listen --seconds 30
-node cli.ts listen --seconds 10 --json
-node cli.ts listen --seconds 5 --json | jq '[.[] | select(.event == "scores")]'
-node cli.ts listen --seconds 5 --json | jq 'map(select(.event == "eeg")) | length'
+npx neuroskill listen                         # 5 seconds (default)
+npx neuroskill listen --seconds 30
+npx neuroskill listen --seconds 10 --json
+npx neuroskill listen --seconds 5 --json | jq '[.[] | select(.event == "scores")]'
+npx neuroskill listen --seconds 5 --json | jq 'map(select(.event == "eeg")) | length'
 ```
 
 **Example output:**
@@ -1510,9 +1510,9 @@ Send a native OS notification through the Skill app.
 Useful for triggering alerts from automation pipelines.
 
 ```bash
-node cli.ts notify "Session complete"
-node cli.ts notify "Focus done" "Take a 5-minute break"
-node cli.ts notify "High drowsiness detected" "Consider a break"
+npx neuroskill notify "Session complete"
+npx neuroskill notify "Focus done" "Take a 5-minute break"
+npx neuroskill notify "High drowsiness detected" "Consider a break"
 ```
 
 **HTTP:**
@@ -1532,10 +1532,10 @@ Open the calibration window and start a profile immediately.
 With `--profile`, matches by profile name (case-insensitive substring) or exact UUID.
 
 ```bash
-node cli.ts calibrate                              # uses active profile
-node cli.ts calibrate --profile "Eyes Open"        # by name
-node cli.ts calibrate --profile default            # by id
-node cli.ts calibrate --json | jq '.ok'
+npx neuroskill calibrate                              # uses active profile
+npx neuroskill calibrate --profile "Eyes Open"        # by name
+npx neuroskill calibrate --profile default            # by id
+npx neuroskill calibrate --json | jq '.ok'
 ```
 
 **HTTP:**
@@ -1564,7 +1564,7 @@ Open the Focus Timer window and auto-start the work phase using the last saved p
 (Pomodoro 25/5, Deep Work 50/10, or Short Focus 15/5).
 
 ```bash
-node cli.ts timer
+npx neuroskill timer
 ```
 
 **HTTP:**
@@ -1583,10 +1583,10 @@ Use this for commands not yet exposed as named CLI subcommands, or for precise
 control over parameters.
 
 ```bash
-node cli.ts raw '{"command":"status"}'
-node cli.ts raw '{"command":"sessions"}' --json
-node cli.ts raw '{"command":"search","start_utc":1740412800,"end_utc":1740415500,"k":3}'
-node cli.ts raw '{"command":"label","text":"retrospective note","label_start_utc":1740412800}'
+npx neuroskill raw '{"command":"status"}'
+npx neuroskill raw '{"command":"sessions"}' --json
+npx neuroskill raw '{"command":"search","start_utc":1740412800,"end_utc":1740415500,"k":3}'
+npx neuroskill raw '{"command":"label","text":"retrospective note","label_start_utc":1740412800}'
 ```
 
 **HTTP:**
@@ -1743,42 +1743,42 @@ From `consciousness`.  All 0–100 (higher = better).
 
 ```bash
 # Current focus level:
-node cli.ts status --json | jq '.scores.focus'
+npx neuroskill status --json | jq '.scores.focus'
 
 # Is alpha suppressed? (good focus = low alpha)
-node cli.ts status --json | jq '.scores.bands.rel_alpha'
+npx neuroskill status --json | jq '.scores.bands.rel_alpha'
 
 # Focus trend across today's session (did I get better or worse?):
-node cli.ts session 0 --json | jq '{focus_avg: .metrics.focus, trend: .trends.focus, first_half: .first.focus, second_half: .second.focus}'
+npx neuroskill session 0 --json | jq '{focus_avg: .metrics.focus, trend: .trends.focus, first_half: .first.focus, second_half: .second.focus}'
 
 # Beta/alpha ratio — high = alert/focused, very high = stressed:
-node cli.ts status --json | jq '.scores.bar'
+npx neuroskill status --json | jq '.scores.bar'
 
 # Check spectral centroid — rises with cognitive load:
-node cli.ts status --json | jq '.scores.spectral_centroid'
+npx neuroskill status --json | jq '.scores.spectral_centroid'
 
 # Compare a morning session vs an afternoon session:
-node cli.ts compare \
+npx neuroskill compare \
   --a-start 1740380100 --a-end 1740382665 \
   --b-start 1740412800 --b-end 1740415510 \
   --json | jq '.insights.deltas.focus'
 
 # Find all moments in your history that look like deep focus:
-node cli.ts search --start $(node cli.ts sessions --json | jq '.sessions[0].start_utc') \
-                   --end   $(node cli.ts sessions --json | jq '.sessions[0].end_utc') \
+npx neuroskill search --start $(npx neuroskill sessions --json | jq '.sessions[0].start_utc') \
+                   --end   $(npx neuroskill sessions --json | jq '.sessions[0].end_utc') \
                    --json | jq '.result.analysis.neighbor_metrics.focus'
 
 # Label a focus block for later retrieval:
-node cli.ts label "deep focus block — no distractions"
+npx neuroskill label "deep focus block — no distractions"
 
 # Search all prior labeled focus moments:
-node cli.ts search-labels "deep focus" --k 10
+npx neuroskill search-labels "deep focus" --k 10
 
 # Alert when focus drops — poll every 30 seconds:
 while true; do
-  F=$(node cli.ts status --json | jq '.scores.focus')
+  F=$(npx neuroskill status --json | jq '.scores.focus')
   if (( $(echo "$F < 0.35" | bc -l) )); then
-    node cli.ts notify "Focus low" "Current: $F — take a break?"
+    npx neuroskill notify "Focus low" "Current: $F — take a break?"
   fi
   sleep 30
 done
@@ -1791,28 +1791,28 @@ done
 ```bash
 
 # LF/HF ratio — high = sympathetic dominance (stress):
-node cli.ts status --json | jq '.scores.lf_hf_ratio'
+npx neuroskill status --json | jq '.scores.lf_hf_ratio'
 
 # Composite stress index from PPG:
-node cli.ts session 0 --json | jq '.metrics.stress_index'
+npx neuroskill session 0 --json | jq '.metrics.stress_index'
 
 # FAA — negative = frontal alpha withdrawal (linked to anxiety/depression):
-node cli.ts status --json | jq '.scores.faa'
+npx neuroskill status --json | jq '.scores.faa'
 
 # Frontal beta elevation (anxiety marker):
-node cli.ts status --json | jq '[.scores.bar, .scores.faa, .scores.lf_hf_ratio]'
+npx neuroskill status --json | jq '[.scores.bar, .scores.faa, .scores.lf_hf_ratio]'
 
 # Compare stress markers across two sessions:
-node cli.ts compare --json | jq '.insights.deltas | {anxiety_faa: .faa, stress_hr: .hr, lf_hf: .lf_hf_ratio}'
+npx neuroskill compare --json | jq '.insights.deltas | {anxiety_faa: .faa, stress_hr: .hr, lf_hf: .lf_hf_ratio}'
 
 # HRV breakdown (low rmssd = stress):
-node cli.ts session 0 --json | jq '{rmssd: .metrics.rmssd, sdnn: .metrics.sdnn, pnn50: .metrics.pnn50}'
+npx neuroskill session 0 --json | jq '{rmssd: .metrics.rmssd, sdnn: .metrics.sdnn, pnn50: .metrics.pnn50}'
 
 # Label a stressful event for analysis:
-node cli.ts label "stressful presentation — racing thoughts"
+npx neuroskill label "stressful presentation — racing thoughts"
 
 # Find neurally similar stressful moments in history:
-node cli.ts search-labels "stress anxiety overwhelmed" --mode both --k 10
+npx neuroskill search-labels "stress anxiety overwhelmed" --mode both --k 10
 ```
 
 ---
@@ -1821,34 +1821,34 @@ node cli.ts search-labels "stress anxiety overwhelmed" --mode both --k 10
 
 ```bash
 # Last night's sleep summary:
-node cli.ts sleep --json | jq '.summary'
+npx neuroskill sleep --json | jq '.summary'
 
 # Deep sleep percentage (N3 — most restorative):
-node cli.ts sleep --json | jq '(.summary.n3_epochs / .summary.total_epochs * 100 | round | tostring) + "% N3"'
+npx neuroskill sleep --json | jq '(.summary.n3_epochs / .summary.total_epochs * 100 | round | tostring) + "% N3"'
 
 # REM percentage:
-node cli.ts sleep --json | jq '(.summary.rem_epochs / .summary.total_epochs * 100 | round | tostring) + "% REM"'
+npx neuroskill sleep --json | jq '(.summary.rem_epochs / .summary.total_epochs * 100 | round | tostring) + "% REM"'
 
 # Full analysis (efficiency, onset, transitions):
-node cli.ts sleep --json | jq '.analysis'
+npx neuroskill sleep --json | jq '.analysis'
 
 # Sleep for a specific session (e.g. last night's recording):
-node cli.ts sleep 0
+npx neuroskill sleep 0
 
 # Sleep over a custom range (yesterday 10 PM to today 7 AM):
-node cli.ts sleep --start 1740376800 --end 1740405600
+npx neuroskill sleep --start 1740376800 --end 1740405600
 
 # Sleep staging for a past date (get timestamps from sessions list):
-SESSIONS=$(node cli.ts sessions --json | jq '.sessions')
+SESSIONS=$(npx neuroskill sessions --json | jq '.sessions')
 START=$(echo $SESSIONS | jq '.[1].start_utc')
 END=$(echo $SESSIONS | jq '.[1].end_utc')
-node cli.ts sleep --start $START --end $END
+npx neuroskill sleep --start $START --end $END
 
 # Wakefulness and drowsiness during the day:
-node cli.ts status --json | jq '{drowsiness: .scores.drowsiness, wakefulness: .consciousness.wakefulness}'
+npx neuroskill status --json | jq '{drowsiness: .scores.drowsiness, wakefulness: .consciousness.wakefulness}'
 
 # Status includes a 48h sleep summary:
-node cli.ts status --json | jq '.sleep'
+npx neuroskill status --json | jq '.sleep'
 ```
 
 ---
@@ -1858,26 +1858,26 @@ node cli.ts status --json | jq '.sleep'
 ```bash
 
 # Raw TBR (theta/beta ratio) — main ADHD biomarker, healthy ~1.0:
-node cli.ts status --json | jq '.scores.tbr'
+npx neuroskill status --json | jq '.scores.tbr'
 
 # Cognitive load score (0–1):
-node cli.ts status --json | jq '.scores.cognitive_load'
+npx neuroskill status --json | jq '.scores.cognitive_load'
 
 # PAC theta-gamma — working memory coupling:
-node cli.ts status --json | jq '.scores.pac_theta_gamma'
+npx neuroskill status --json | jq '.scores.pac_theta_gamma'
 
 # Sample entropy — lower = more regular/predictable (seen in ADHD):
-node cli.ts session 0 --json | jq '.metrics.sample_entropy'
+npx neuroskill session 0 --json | jq '.metrics.sample_entropy'
 
 # Full session trend for TBR and cognitive load:
-node cli.ts session 0 --json | jq '{tbr: .metrics.tbr, cog_load: .metrics.cognitive_load, tbr_trend: .trends.tbr}'
+npx neuroskill session 0 --json | jq '{tbr: .metrics.tbr, cog_load: .metrics.cognitive_load, tbr_trend: .trends.tbr}'
 
 # Compare TBR before and after a task:
-node cli.ts compare --json | jq '.insights.deltas.tbr'
+npx neuroskill compare --json | jq '.insights.deltas.tbr'
 
 # Watch TBR in real time (lower is better for focus):
 while true; do
-  node cli.ts status --json | jq '{tbr: .scores.tbr, focus: .scores.focus}'
+  npx neuroskill status --json | jq '{tbr: .scores.tbr, focus: .scores.focus}'
   sleep 10
 done
 ```
@@ -1888,33 +1888,33 @@ done
 
 ```bash
 # Current meditation score:
-node cli.ts status --json | jq '.scores.meditation'
+npx neuroskill status --json | jq '.scores.meditation'
 
 # Alpha peak frequency — rises during deep relaxation:
-node cli.ts status --json | jq '.scores.apf'
+npx neuroskill status --json | jq '.scores.apf'
 
 # FAA — positive = relaxed/approach state:
-node cli.ts status --json | jq '.scores.faa'
+npx neuroskill status --json | jq '.scores.faa'
 
 # Theta elevation (meditative absorption):
-node cli.ts status --json | jq '.scores.bands.rel_theta'
+npx neuroskill status --json | jq '.scores.bands.rel_theta'
 
 # Full session meditation trend:
-node cli.ts session 0 --json | jq '{meditation: .metrics.meditation, relaxation: .metrics.relaxation, trend: .trends.meditation}'
+npx neuroskill session 0 --json | jq '{meditation: .metrics.meditation, relaxation: .metrics.relaxation, trend: .trends.meditation}'
 
 # Complexity during meditation (lower = more ordered):
-node cli.ts session 0 --json | jq '{perm_entropy: .metrics.permutation_entropy, sample_entropy: .metrics.sample_entropy}'
+npx neuroskill session 0 --json | jq '{perm_entropy: .metrics.permutation_entropy, sample_entropy: .metrics.sample_entropy}'
 
 # Label meditation milestones:
-node cli.ts label "entered theta meditation state"
-node cli.ts label "meditation ended — felt deeply rested"
+npx neuroskill label "entered theta meditation state"
+npx neuroskill label "meditation ended — felt deeply rested"
 
 # Find all prior meditation sessions:
-node cli.ts search-labels "meditation" --mode both --k 20
-node cli.ts search-labels "relaxed theta alpha" --mode context --k 10
+npx neuroskill search-labels "meditation" --mode both --k 20
+npx neuroskill search-labels "relaxed theta alpha" --mode context --k 10
 
 # Compare a meditation session to a work session:
-node cli.ts compare \
+npx neuroskill compare \
   --a-start <meditation_start> --a-end <meditation_end> \
   --b-start <work_start> --b-end <work_end> \
   --json | jq '.insights.deltas | {relaxation, meditation: .meditation, alpha: .rel_alpha}'
@@ -1926,42 +1926,42 @@ node cli.ts compare \
 
 ```bash
 # Basic: find concepts related to "deep focus" across all data layers:
-node cli.ts interactive "deep focus"
+npx neuroskill interactive "deep focus"
 
 # Increase reach to capture labels up to 30 minutes from each EEG point:
-node cli.ts interactive "deep focus" --reach 30
+npx neuroskill interactive "deep focus" --reach 30
 
 # More neighbors at each layer for a richer graph:
-node cli.ts interactive "meditation" --k-text 8 --k-eeg 8 --k-labels 5 --reach 20
+npx neuroskill interactive "meditation" --k-text 8 --k-eeg 8 --k-labels 5 --reach 20
 
 # What text labels are semantically closest to "anxiety"?
-node cli.ts interactive "anxiety" --json | jq '[.nodes[] | select(.kind == "text_label") | {text, sim: (1 - .distance | . * 100 | round)}]'
+npx neuroskill interactive "anxiety" --json | jq '[.nodes[] | select(.kind == "text_label") | {text, sim: (1 - .distance | . * 100 | round)}]'
 
 # What nearby labels cluster around EEG moments found via "stress"?
-node cli.ts interactive "stress" --json | jq '[.nodes[] | select(.kind == "found_label") | .text]'
+npx neuroskill interactive "stress" --json | jq '[.nodes[] | select(.kind == "found_label") | .text]'
 
 # Count total discovered nodes by layer:
-node cli.ts interactive "flow state" --json | jq '[.nodes | group_by(.kind)[] | {(.[0].kind): length}] | add'
+npx neuroskill interactive "flow state" --json | jq '[.nodes | group_by(.kind)[] | {(.[0].kind): length}] | add'
 
 # Visualize the graph (requires graphviz):
-node cli.ts interactive "deep focus" --dot | dot -Tsvg -o focus_graph.svg && open focus_graph.svg
-node cli.ts interactive "meditation" --dot | dot -Tpng -o meditation_graph.png
+npx neuroskill interactive "deep focus" --dot | dot -Tsvg -o focus_graph.svg && open focus_graph.svg
+npx neuroskill interactive "meditation" --dot | dot -Tpng -o meditation_graph.png
 
 # Export DOT from JSON if you want both outputs at once:
-RESULT=$(node cli.ts interactive "anxiety" --json)
+RESULT=$(npx neuroskill interactive "anxiety" --json)
 echo "$RESULT" | jq -r '.dot' | dot -Tsvg > anxiety_graph.svg
 echo "$RESULT" | jq '[.nodes[] | select(.kind == "text_label") | .text]'
 
 # Chain with search-labels to verify what's in the text index first:
-node cli.ts search-labels "deep focus" --k 5 --json | jq '.results[].text'
+npx neuroskill search-labels "deep focus" --k 5 --json | jq '.results[].text'
 # Then run interactive to cross-modal bridge into EEG:
-node cli.ts interactive "deep focus" --k-text 5 --k-eeg 5
+npx neuroskill interactive "deep focus" --k-text 5 --k-eeg 5
 
 # Use --full to inspect raw JSON alongside the summary:
-node cli.ts interactive "concentration" --full
+npx neuroskill interactive "concentration" --full
 
 # Feed into a script — check if any EEG moments were found:
-EEG_COUNT=$(node cli.ts interactive "focus" --json | jq '[.nodes[] | select(.kind == "eeg_point")] | length')
+EEG_COUNT=$(npx neuroskill interactive "focus" --json | jq '[.nodes[] | select(.kind == "eeg_point")] | length')
 if [ "$EEG_COUNT" -eq 0 ]; then
   echo "No EEG moments found — record more sessions first"
 fi
@@ -1973,30 +1973,30 @@ fi
 
 ```bash
 # Auto: last 2 sessions vs each other:
-node cli.ts compare
+npx neuroskill compare
 
 # Explicit sessions (get timestamps from `sessions`):
-node cli.ts sessions --json | jq '.sessions[:2] | [.[].start_utc, .[].end_utc]'
+npx neuroskill sessions --json | jq '.sessions[:2] | [.[].start_utc, .[].end_utc]'
 
-node cli.ts compare \
+npx neuroskill compare \
   --a-start 1740380100 --a-end 1740382665 \
   --b-start 1740412800 --b-end 1740415510
 
 # Which metrics improved?
-node cli.ts compare --json | jq '.insights.improved'
-node cli.ts compare --json | jq '.insights.declined'
+npx neuroskill compare --json | jq '.insights.improved'
+npx neuroskill compare --json | jq '.insights.declined'
 
 # Full delta table:
-node cli.ts compare --json | jq '.insights.deltas'
+npx neuroskill compare --json | jq '.insights.deltas'
 
 # Focus delta only:
-node cli.ts compare --json | jq '.insights.deltas.focus | {a, b, change_pct: .pct}'
+npx neuroskill compare --json | jq '.insights.deltas.focus | {a, b, change_pct: .pct}'
 
 # All metrics for session A:
-node cli.ts compare --json | jq '.a'
+npx neuroskill compare --json | jq '.a'
 
 # 3D UMAP — how spatially separated are the two sessions?
-node cli.ts umap \
+npx neuroskill umap \
   --a-start 1740380100 --a-end 1740382665 \
   --b-start 1740412800 --b-end 1740415510 \
   --json | jq '.result.analysis.separation_score'
@@ -2013,7 +2013,7 @@ All commands that accept `--start` and `--end` use **Unix seconds (UTC)**.
 
 ```bash
 # Get timestamps from the session list:
-node cli.ts sessions --json | jq '.sessions[0] | {start: .start_utc, end: .end_utc}'
+npx neuroskill sessions --json | jq '.sessions[0] | {start: .start_utc, end: .end_utc}'
 
 # Convert a human date to Unix seconds (bash):
 date -j -f "%Y-%m-%d %H:%M" "2026-02-24 08:00" +%s      # macOS
@@ -2021,24 +2021,24 @@ date -d "2026-02-24 08:00" +%s                            # Linux
 
 # Last 2 hours:
 NOW=$(date +%s)
-node cli.ts sleep --start $((NOW - 7200)) --end $NOW
+npx neuroskill sleep --start $((NOW - 7200)) --end $NOW
 
 # Today midnight to now:
 TODAY=$(date -j -v0H -v0M -v0S +%s 2>/dev/null || date -d "today 00:00" +%s)
-node cli.ts sleep --start $TODAY --end $(date +%s)
+npx neuroskill sleep --start $TODAY --end $(date +%s)
 
 # Specific date range (Feb 23):
-node cli.ts sleep --start 1740268800 --end 1740355199
+npx neuroskill sleep --start 1740268800 --end 1740355199
 
 # rerun: lines — the CLI always prints exact timestamps when auto-selecting:
-node cli.ts sleep
-# → rerun: node cli.ts sleep --start 1740380100 --end 1740415510
+npx neuroskill sleep
+# → rerun: npx neuroskill sleep --start 1740380100 --end 1740415510
 #   Copy-paste this for reproducible results.
 
 # Pipe the rerun command into jq for automation:
-node cli.ts search --json | jq '.result.analysis.distance_stats.mean'
+npx neuroskill search --json | jq '.result.analysis.distance_stats.mean'
 # Then re-run with explicit timestamps for a cron job:
-node cli.ts search --start 1740412800 --end 1740415500 --json | jq '.result.analysis.distance_stats.mean'
+npx neuroskill search --start 1740412800 --end 1740415500 --json | jq '.result.analysis.distance_stats.mean'
 ```
 
 ---
@@ -2049,16 +2049,16 @@ node cli.ts search --start 1740412800 --end 1740415500 --json | jq '.result.anal
 # ── Cron / scheduled polling ──────────────────────────────────────────────
 
 # Every 5 minutes: log focus score to a CSV
-*/5 * * * * node /path/to/cli.ts status --json \
+*/5 * * * * npx neuroskill status --json \
   | jq -r '[now, .scores.focus, .scores.relaxation, .scores.hr] | @csv' \
   >> ~/eeg_log.csv
 
 # ── Shell function wrappers ────────────────────────────────────────────────
 
-skill_focus()  { node cli.ts status --json | jq '.scores.focus'; }
-skill_relax()  { node cli.ts status --json | jq '.scores.relaxation'; }
-skill_tbr()    { node cli.ts status --json | jq '.scores.tbr'; }
-skill_battery(){ node cli.ts status --json | jq '.device.battery'; }
+skill_focus()  { npx neuroskill status --json | jq '.scores.focus'; }
+skill_relax()  { npx neuroskill status --json | jq '.scores.relaxation'; }
+skill_tbr()    { npx neuroskill status --json | jq '.scores.tbr'; }
+skill_battery(){ npx neuroskill status --json | jq '.device.battery'; }
 
 # ── Python polling example ────────────────────────────────────────────────
 
@@ -2067,7 +2067,7 @@ import subprocess, json, time
 
 def skill(cmd):
     r = subprocess.run(
-        ["node", "cli.ts", *cmd.split(), "--json"],
+        ["npx", "neuroskill", *cmd.split(), "--json"],
         capture_output=True, text=True
     )
     return json.loads(r.stdout)
