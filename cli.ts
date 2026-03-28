@@ -5,7 +5,9 @@ const CLI_VERSION = "1.2.0";
 /**
  * npx neuroskill — Command-line interface for the Skill WebSocket API.
  *
- * Supported devices: Muse (4ch), OpenBCI Ganglion (4ch), Neurable MW75 Neuro (12ch), Hermes V1 (8ch).
+ * Supported devices: Muse (4ch), OpenBCI Ganglion/Cyton/Cyton+Daisy (4–16ch),
+ * Neurable MW75 Neuro (12ch), Emotiv EPOC X/Insight/Flex/MN8 (5–32ch),
+ * IDUN Guardian (1ch), RE-AK Nucleus Hermes (8ch), Mendi (fNIRS).
  * All commands work identically regardless of which device is connected.
  *
  * Usage:
@@ -499,30 +501,48 @@ async function discover(explicitPort: number | null): Promise<number> {
   });
   if (port) return port;
 
-  // lsof fallback
-  printInfo("trying lsof fallback…");
-  try {
-    const ps = execSync("pgrep -if 'skill' 2>/dev/null || true", { encoding: "utf8" }).trim();
-    if (ps) {
-      for (const pid of ps.split("\n").filter(Boolean)) {
+  // Process scan fallback — platform-specific
+  if (process.platform === "win32") {
+    // Windows: try common ports with a WebSocket handshake probe
+    printInfo("trying port probe fallback (Windows)…");
+    for (const p of [8375, 8376, 8377]) {
+      const ok = await new Promise<boolean>((resolve) => {
         try {
-          const lsof = execSync(`lsof -iTCP -sTCP:LISTEN -nP -p ${pid} 2>/dev/null || true`, { encoding: "utf8" });
-          for (const m of lsof.matchAll(/:(\d{4,5})\s+\(LISTEN\)/g)) {
-            const p = Number(m[1]);
-            const ok = await new Promise<boolean>((resolve) => {
-              try {
-                const w = new WebSocket(`ws://127.0.0.1:${p}`);
-                const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, 1500);
-                w.on("open", () => { clearTimeout(t); w.close(); resolve(true); });
-                w.on("error", () => { clearTimeout(t); resolve(false); });
-              } catch { resolve(false); }
-            });
-            if (ok) return p;
-          }
-        } catch {}
-      }
+          const w = new WebSocket(`ws://127.0.0.1:${p}`);
+          const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, 1500);
+          w.on("open", () => { clearTimeout(t); w.close(); resolve(true); });
+          w.on("error", () => { clearTimeout(t); resolve(false); });
+        } catch { resolve(false); }
+      });
+      if (ok) return p;
     }
-  } catch {}
+  } else {
+    // macOS / Linux: lsof fallback
+    printInfo("trying lsof fallback…");
+    try {
+      const ps = execSync("pgrep -if 'skill' 2>/dev/null || true", { encoding: "utf8" }).trim();
+      if (ps) {
+        for (const pid of ps.split("\n").filter(Boolean)) {
+          if (!/^\d+$/.test(pid.trim())) continue; // skip non-numeric lines
+          try {
+            const lsof = execSync(`lsof -iTCP -sTCP:LISTEN -nP -p ${pid.trim()} 2>/dev/null || true`, { encoding: "utf8" });
+            for (const m of lsof.matchAll(/:(\d{4,5})\s+\(LISTEN\)/g)) {
+              const p = Number(m[1]);
+              const ok = await new Promise<boolean>((resolve) => {
+                try {
+                  const w = new WebSocket(`ws://127.0.0.1:${p}`);
+                  const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, 1500);
+                  w.on("open", () => { clearTimeout(t); w.close(); resolve(true); });
+                  w.on("error", () => { clearTimeout(t); resolve(false); });
+                } catch { resolve(false); }
+              });
+              if (ok) return p;
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
 
   printError("could not discover Skill. Is it running? Use --port <n> to specify manually.");
 }

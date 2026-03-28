@@ -28,7 +28,7 @@
 
 ## Features
 
-- **Multi-device support** — Muse (4ch), OpenBCI Ganglion (4ch), Neurable MW75 Neuro (12ch), Hermes V1 (8ch)
+- **Multi-device support** — Muse (4ch), OpenBCI Ganglion/Cyton/Cyton+Daisy (4–16ch), Neurable MW75 Neuro (12ch), Emotiv EPOC X/Insight/Flex/MN8 (5–32ch), IDUN Guardian (1ch), RE-AK Nucleus Hermes (8ch), Mendi fNIRS
 - **Real-time EEG scores** — focus, relaxation, engagement, meditation, cognitive load, drowsiness
 - **Consciousness metrics** — Lempel-Ziv Complexity proxy, wakefulness, information integration
 - **PPG / HRV** — heart rate, RMSSD, SDNN, pNN50, LF/HF, SpO₂, Baevsky stress index
@@ -53,7 +53,7 @@
 | Dependency | Version |
 |------------|---------|
 | Node.js    | ≥ 18    |
-| Skill server | running locally (auto-discovered via mDNS or `lsof`) |
+| Skill server | running locally (auto-discovered via mDNS, port probe, or `lsof`) |
 
 ---
 
@@ -115,7 +115,9 @@ neuroskill auto-discovers the Skill server port via:
 
 1. `--port <n>` flag (skips all discovery)
 2. mDNS (`_skill._tcp` service advertisement, 5 s timeout)
-3. `lsof` / `pgrep` fallback (probes each TCP LISTEN port)
+3. Platform-specific fallback:
+   - **macOS / Linux**: `lsof` / `pgrep` (probes each TCP LISTEN port)
+   - **Windows**: WebSocket handshake probe on common ports (8375–8377)
 
 ### WebSocket (default)
 
