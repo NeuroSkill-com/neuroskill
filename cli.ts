@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /** Current CLI version — bump when breaking changes are made. */
-const CLI_VERSION = "1.2.0";
+const CLI_VERSION = "1.3.0";
 
 /**
  * npx neuroskill — Command-line interface for the Skill WebSocket API.
@@ -36,6 +36,7 @@ const CLI_VERSION = "1.2.0";
  *   timer                          Open focus-timer window and start work phase immediately
  *   umap                           3D UMAP projection with live progress bar
  *   listen                         Stream broadcast events for N seconds
+ *   subscribe [opts]               Set broadcast filter (events, fields, rate limit)
  *   hooks                          List Proactive Hook rules, scenarios, and last-trigger metadata
  *   hooks list                     List raw hook rules (name, keywords, threshold, …)
  *   hooks add <name> [opts]        Add a new hook rule
@@ -45,7 +46,7 @@ const CLI_VERSION = "1.2.0";
  *   hooks update <name> [opts]     Update fields on an existing hook
  *   hooks suggest "kw1,kw2"        Suggest threshold from real EEG/label data
  *   hooks log [--limit N --offset M]  View paginated hook trigger audit log rows
- *   health                          HealthKit summary (last 24h) — sleep, workouts, steps, HR, metrics
+ *   health                          HealthKit summary (last 24h) — sleep, workouts, steps, HR, metrics, GPS
  *   health summary [--start --end] Aggregate counts for a time range
  *   health sleep [--start --end]   Query Apple Health sleep samples
  *   health workouts [--start --end] Query workout sessions
@@ -53,10 +54,39 @@ const CLI_VERSION = "1.2.0";
  *   health steps [--start --end]   Query step counts
  *   health metrics --metric-type <t> [--start --end] Query scalar health metrics
  *   health metric-types            List all stored metric types
+ *   health location [--start --end] [--limit N] Query GPS fixes from iOS CoreLocation
  *   health sync <json>             Push HealthKit data (iOS companion format)
+ *   oura                           Oura Ring status — check token and connectivity
+ *   oura sync [--start --end]      Sync Oura Ring data for a date range (default: last 30 days)
+ *   oura status                    Check Oura Ring token and user info
+ *   calendar [--start --end]       List calendar events in a time range (default: next 7 days)
+ *   calendar status                Show calendar access status + platform
+ *   calendar permission            Request calendar access (macOS — shows system dialog)
  *   dnd                            Show DND automation status (config + live eligibility + OS state)
  *   dnd on                         Force-enable DND immediately (bypass EEG threshold)
  *   dnd off                        Force-disable DND immediately
+ *   iroh info                      Show iroh endpoint details and auth summary
+ *   iroh totp ...                  Manage TOTP credentials (list/create/qr/revoke)
+ *   iroh clients ...               Manage iroh clients (list/register/revoke/scope/permissions)
+ *   iroh scope-groups              List available permission scope groups
+ *   iroh phone-invite              Generate a phone pairing invitation
+ *   tokens [list]                  List all access tokens (redacted)
+ *   tokens create <name> [opts]    Create a new access token (--acl, --expiry)
+ *   tokens revoke <id>             Revoke an access token
+ *   tokens delete <id>             Permanently delete an access token
+ *   tokens refresh                 Rotate the default daemon token
+ *   devices [list]                 List discovered BLE devices
+ *   devices pair <id> [name]       Pair a BLE device
+ *   devices forget <id>            Forget a paired device
+ *   devices set-preferred <id>     Set preferred device for auto-connect
+ *   start-session [target]         Start a recording session (optional BLE target id)
+ *   stop-session                   Stop the current recording session
+ *   scanner start|stop|state       Control BLE device scanner
+ *   reconnect state|enable|disable|retry|cancel  Manage auto-reconnect
+ *   service install|uninstall|status  Manage daemon background service
+ *   lsl                            Discover available LSL streams
+ *   daemon-version                 Show daemon version and protocol info
+ *   daemon-log [--limit N]         Show recent daemon log lines
  *   llm status                     LLM server status (stopped/loading/running)
  *   llm start                      Load active model and start LLM inference server
  *   llm stop                       Stop LLM inference server and free GPU memory
@@ -146,6 +176,8 @@ const CLI_VERSION = "1.2.0";
  *   npx neuroskill umap                             # auto: last 2 sessions → 3D points
  *   npx neuroskill umap --json | jq '.points | length'
  *   npx neuroskill listen --seconds 30              # 30s event stream
+ *   npx neuroskill subscribe --events eeg-bands --fields focus,hr --max-hz 1
+ *   npx neuroskill subscribe --events '*'       # reset to all events, all fields
  *   npx neuroskill hooks --json | jq '.hooks[] | {name: .hook.name, scenario: .hook.scenario, last: .last_trigger.triggered_at_utc}'
  *   npx neuroskill hooks list --json
  *   npx neuroskill hooks add "Deep Work Guard" --keywords "focus,deep work,flow" --scenario cognitive --threshold 0.14
@@ -162,7 +194,37 @@ const CLI_VERSION = "1.2.0";
 
 import { Bonjour } from "bonjour-service";
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 import WebSocket from "ws";
+
+// ── Daemon auth ───────────────────────────────────────────────────────────────
+
+/** Default daemon port. */
+const DAEMON_PORT = 18444;
+
+/** Cached daemon auth token. */
+let daemonToken = "";
+
+/**
+ * Load the daemon bearer token from ~/.config/skill/daemon/auth.token.
+ * Returns empty string if the file doesn't exist.
+ */
+function loadDaemonToken(): string {
+  if (daemonToken) return daemonToken;
+  try {
+    const configDir = process.env.XDG_CONFIG_HOME
+      || (process.platform === "win32"
+        ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"))
+        : join(homedir(), process.platform === "darwin" ? "Library/Application Support" : ".config"));
+    const tokenPath = join(configDir, "skill", "daemon", "auth.token");
+    daemonToken = readFileSync(tokenPath, "utf8").trim();
+  } catch {
+    daemonToken = "";
+  }
+  return daemonToken;
+}
 
 // ── ANSI colors ───────────────────────────────────────────────────────────────
 // These are module-level `let`s so that `applyNoColor()` can zero them all
@@ -316,6 +378,14 @@ function printResult(data: unknown) {
 }
 
 /**
+ * Print a JSON value to stdout — colorized in normal mode, raw in `--json` mode.
+ * Convenience for commands that want to dump the full response as-is.
+ */
+function printJson(data: unknown) {
+  console.log(colorizeJson(data));
+}
+
+/**
  * Print a fatal error message, clean up resources, and exit with code 1.
  * In `--json` mode outputs `{"error":"..."}` to stdout for programmatic
  * consumption; otherwise prints a red-bold error to stderr.
@@ -450,9 +520,12 @@ let httpBase = "";
 async function sendHttp(cmd: { command: string; [k: string]: unknown }, _timeout?: number): Promise<any> {
   let res: Response;
   try {
+    const token = loadDaemonToken();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
     res = await fetch(`${httpBase}/`, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body:    JSON.stringify(cmd),
     });
   } catch (e: any) {
@@ -461,6 +534,30 @@ async function sendHttp(cmd: { command: string; [k: string]: unknown }, _timeout
       `  Tip: use --port <n> to specify the port manually, or omit --http for auto-transport.`
     );
   }
+  return res.json();
+}
+
+// ── Direct REST helpers ──────────────────────────────────────────────────────
+// Some daemon endpoints are REST-only (no WS command equivalent).  These
+// helpers call them directly via HTTP GET/POST on the /v1/... path.
+
+async function restGet(path: string): Promise<any> {
+  const token = loadDaemonToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${httpBase}/v1${path}`, { headers });
+  return res.json();
+}
+
+async function restPost(path: string, body?: unknown): Promise<any> {
+  const token = loadDaemonToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${httpBase}/v1${path}`, {
+    method: "POST",
+    headers,
+    body: body != null ? JSON.stringify(body) : "{}",
+  });
   return res.json();
 }
 
@@ -486,6 +583,21 @@ async function discover(explicitPort: number | null): Promise<number> {
   // be caught (port 0 is not valid for our use case, but the intent is clear).
   if (explicitPort != null) return explicitPort;
 
+  // Try daemon port first (fast check)
+  printInfo(`probing daemon at 127.0.0.1:${DAEMON_PORT}…`);
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    const res = await fetch(`http://127.0.0.1:${DAEMON_PORT}/healthz`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      printInfo(`daemon reachable at port ${DAEMON_PORT}`);
+      return DAEMON_PORT;
+    }
+  } catch {}
+
   // mDNS via bonjour-service
   printInfo("discovering Skill via mDNS…");
   const port = await new Promise<number | null>((resolve) => {
@@ -501,48 +613,30 @@ async function discover(explicitPort: number | null): Promise<number> {
   });
   if (port) return port;
 
-  // Process scan fallback — platform-specific
-  if (process.platform === "win32") {
-    // Windows: try common ports with a WebSocket handshake probe
-    printInfo("trying port probe fallback (Windows)…");
-    for (const p of [8375, 8376, 8377]) {
-      const ok = await new Promise<boolean>((resolve) => {
+  // lsof fallback
+  printInfo("trying lsof fallback…");
+  try {
+    const ps = execSync("pgrep -if 'skill' 2>/dev/null || true", { encoding: "utf8" }).trim();
+    if (ps) {
+      for (const pid of ps.split("\n").filter(Boolean)) {
         try {
-          const w = new WebSocket(`ws://127.0.0.1:${p}`);
-          const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, 1500);
-          w.on("open", () => { clearTimeout(t); w.close(); resolve(true); });
-          w.on("error", () => { clearTimeout(t); resolve(false); });
-        } catch { resolve(false); }
-      });
-      if (ok) return p;
-    }
-  } else {
-    // macOS / Linux: lsof fallback
-    printInfo("trying lsof fallback…");
-    try {
-      const ps = execSync("pgrep -if 'skill' 2>/dev/null || true", { encoding: "utf8" }).trim();
-      if (ps) {
-        for (const pid of ps.split("\n").filter(Boolean)) {
-          if (!/^\d+$/.test(pid.trim())) continue; // skip non-numeric lines
-          try {
-            const lsof = execSync(`lsof -iTCP -sTCP:LISTEN -nP -p ${pid.trim()} 2>/dev/null || true`, { encoding: "utf8" });
-            for (const m of lsof.matchAll(/:(\d{4,5})\s+\(LISTEN\)/g)) {
-              const p = Number(m[1]);
-              const ok = await new Promise<boolean>((resolve) => {
-                try {
-                  const w = new WebSocket(`ws://127.0.0.1:${p}`);
-                  const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, 1500);
-                  w.on("open", () => { clearTimeout(t); w.close(); resolve(true); });
-                  w.on("error", () => { clearTimeout(t); resolve(false); });
-                } catch { resolve(false); }
-              });
-              if (ok) return p;
-            }
-          } catch {}
-        }
+          const lsof = execSync(`lsof -iTCP -sTCP:LISTEN -nP -p ${pid} 2>/dev/null || true`, { encoding: "utf8" });
+          for (const m of lsof.matchAll(/:(\d{4,5})\s+\(LISTEN\)/g)) {
+            const p = Number(m[1]);
+            const ok = await new Promise<boolean>((resolve) => {
+              try {
+                const w = new WebSocket(`ws://127.0.0.1:${p}`);
+                const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, 1500);
+                w.on("open", () => { clearTimeout(t); w.close(); resolve(true); });
+                w.on("error", () => { clearTimeout(t); resolve(false); });
+              } catch { resolve(false); }
+            });
+            if (ok) return p;
+          }
+        } catch {}
       }
-    } catch {}
-  }
+    }
+  } catch {}
 
   printError("could not discover Skill. Is it running? Use --port <n> to specify manually.");
 }
@@ -562,12 +656,16 @@ async function connect(port: number): Promise<void> {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       await new Promise<void>((resolve, reject) => {
-        const w = new WebSocket(`ws://127.0.0.1:${port}`);
+        const token = loadDaemonToken();
+        const wsUrl = token
+          ? `ws://127.0.0.1:${port}/v1/events?token=${encodeURIComponent(token)}`
+          : `ws://127.0.0.1:${port}/v1/events`;
+        const w = new WebSocket(wsUrl);
         const t = setTimeout(() => { try { w.close(); } catch {} reject(new Error("timeout")); }, 5000);
         w.on("open", () => { clearTimeout(t); ws = w; resolve(); });
         w.on("error", () => { clearTimeout(t); reject(new Error("connection refused")); });
       });
-      printInfo(`connected to ws://127.0.0.1:${port}`);
+      printInfo(`connected to ws://127.0.0.1:${port}/v1/events`);
       return;
     } catch (e: any) {
       if (attempt >= 3) printError(`failed to connect after 3 attempts: ${e.message}`);
@@ -585,7 +683,11 @@ async function connect(port: number): Promise<void> {
 async function tryConnectOnce(port: number, timeoutMs = 3000): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     try {
-      const w = new WebSocket(`ws://127.0.0.1:${port}`);
+      const token = loadDaemonToken();
+      const wsUrl = token
+        ? `ws://127.0.0.1:${port}/v1/events?token=${encodeURIComponent(token)}`
+        : `ws://127.0.0.1:${port}/v1/events`;
+      const w = new WebSocket(wsUrl);
       const t = setTimeout(() => { try { w.close(); } catch {} resolve(false); }, timeoutMs);
       w.on("open", () => { clearTimeout(t); ws = w; resolve(true); });
       w.on("error", () => { clearTimeout(t); resolve(false); });
@@ -719,6 +821,32 @@ interface Args {
   healthType?: string;
   /** Metric type for `health metrics` queries (e.g. restingHeartRate, hrv, vo2Max). */
   metricType?: string;
+  /** Oura subcommand: `sync` | `status` | undefined. */
+  ouraSub?: string;
+  /** Oura start date for sync (YYYY-MM-DD). */
+  ouraStart?: string;
+  /** Oura end date for sync (YYYY-MM-DD). */
+  ouraEnd?: string;
+  /** Calendar subcommand: `status` | `permission` | undefined (events). */
+  calendarSub?: string;
+  /** iroh subcommand group/action. */
+  irohSub?: string;
+  /** One-time password for iroh client registration. */
+  otp?: string;
+  /** TOTP credential id hint for registration. */
+  totpId?: string;
+  /** Client scope for iroh authorization: read|full. */
+  scope?: string;
+  /** Token ACL for `tokens create --acl <admin|read_only|data|stream>`. */
+  acl?: string;
+  /** Token expiry for `tokens create --expiry <week|month|quarter|never>`. */
+  expiry?: string;
+  /** Token name for `tokens create <name>`. */
+  tokenName?: string;
+  /** Token ID for `tokens revoke/delete <id>`. */
+  tokenId?: string;
+  /** Device ID for device commands. */
+  deviceId?: string;
   /** Bedtime for `sleep-schedule set --bedtime HH:MM` (24-h format). */
   bedtime?: string;
   /** Wake time for `sleep-schedule set --wake HH:MM` (24-h format). */
@@ -766,6 +894,12 @@ interface Args {
    * Passed as `temperature` in GenParams.  Default: 0.8.
    */
   temperature?: number;
+  /** Comma-separated event types for `subscribe` (e.g. "eeg-bands,hook"). */
+  subEvents?: string;
+  /** Comma-separated field names for `subscribe` (e.g. "focus,hr,relAlpha"). */
+  subFields?: string;
+  /** Max broadcast rate in Hz for `subscribe` (0 = unlimited). */
+  maxHz?: number;
 }
 
 /**
@@ -815,7 +949,9 @@ function parseArgs(): Args {
     "--keywords", "--scenario", "--command", "--threshold", "--recent", "--hook-text",
     "--actions", "--loops", "--break", "--auto-start", "--name", "--by-image", "--window",
     "--bedtime", "--wake", "--preset",
-    "--metric-type",
+    "--metric-type", "--oura-start", "--oura-end", "--otp", "--totp-id", "--scope",
+    "--events", "--fields", "--max-hz",
+    "--acl", "--expiry", "--device-id",
   ]);
 
   let i = 0;
@@ -888,9 +1024,28 @@ function parseArgs(): Args {
     else if (a === "--auto-start")  { args.calAutoStart = true; }
     else if (a === "--name")        { args.calName      = argv[++i]; }
     else if (a === "--metric-type") { args.metricType    = argv[++i]; }
+    else if (a === "--oura-start") { args.ouraStart     = argv[++i]; }
+    else if (a === "--oura-end")   { args.ouraEnd       = argv[++i]; }
     else if (a === "--bedtime")     { args.bedtime      = argv[++i]; }
     else if (a === "--wake")        { args.wake          = argv[++i]; }
     else if (a === "--preset")      { args.preset        = argv[++i]; }
+    else if (a === "--otp")         { args.otp           = argv[++i]; }
+    else if (a === "--totp-id")     { args.totpId        = argv[++i]; }
+    else if (a === "--scope")       { args.scope         = argv[++i]; }
+    else if (a === "--events")      { args.subEvents     = argv[++i]; }
+    else if (a === "--fields")      { args.subFields     = argv[++i]; }
+    else if (a === "--acl")         { args.acl            = argv[++i]; }
+    else if (a === "--expiry")      { args.expiry         = argv[++i]; }
+    else if (a === "--device-id")   { args.deviceId       = argv[++i]; }
+    else if (a === "--max-hz")      {
+      const raw = argv[++i];
+      const n   = Number(raw);
+      if (raw == null || raw.trim() === "" || isNaN(n)) {
+        console.error(`error: --max-hz requires a numeric value (got: ${JSON.stringify(raw)})`);
+        process.exit(1);
+      }
+      args.maxHz = n;
+    }
     // ── Positional arguments ─────────────────────────────────────────────
     else if (!args.command)      { args.command = a.toLowerCase(); }
     else if (args.command === "label"         && !args.text)    { args.text    = a; }
@@ -953,6 +1108,60 @@ function parseArgs(): Args {
     }
     else if (args.command === "health" && args.subAction === "sync" && !args.rawJson) {
       args.rawJson = a; // JSON payload
+    }
+    else if (args.command === "oura" && !args.ouraSub) {
+      args.ouraSub = a.toLowerCase(); // "sync" | "status"
+    }
+    else if (args.command === "calendar" && !args.calendarSub) {
+      args.calendarSub = a.toLowerCase(); // "status" | "permission"
+    }
+    else if (args.command === "iroh" && !args.irohSub) {
+      args.irohSub = a.toLowerCase();
+    }
+    else if (args.command === "iroh" && args.irohSub === "phone-invite" && !args.text) {
+      args.text = a; // endpoint_id for phone invite
+    }
+    else if (args.command === "iroh" && (args.irohSub === "totp" || args.irohSub === "clients") && !args.subAction) {
+      args.subAction = a.toLowerCase();
+    }
+    else if (args.command === "iroh" && args.irohSub === "totp" && ["create", "qr", "revoke"].includes(args.subAction ?? "") && !args.text) {
+      args.text = a;
+    }
+    else if (args.command === "iroh" && args.irohSub === "clients" && ["register", "revoke", "scope", "permissions"].includes(args.subAction ?? "") && !args.text) {
+      args.text = a;
+    }
+    else if (args.command === "iroh" && args.irohSub === "clients" && args.subAction === "scope" && !args.body) {
+      args.body = a;
+    }
+    else if (args.command === "tokens" && !args.subAction) {
+      args.subAction = a.toLowerCase(); // list|create|revoke|delete|refresh
+    }
+    else if (args.command === "tokens" && args.subAction === "create" && !args.tokenName) {
+      args.tokenName = a; // token name
+    }
+    else if (args.command === "tokens" && (args.subAction === "revoke" || args.subAction === "delete") && !args.tokenId) {
+      args.tokenId = a; // token id
+    }
+    else if (args.command === "devices" && !args.subAction) {
+      args.subAction = a.toLowerCase(); // list|pair|forget|set-preferred
+    }
+    else if (args.command === "devices" && ["pair", "forget", "set-preferred"].includes(args.subAction ?? "") && !args.deviceId) {
+      args.deviceId = a;
+    }
+    else if (args.command === "devices" && args.subAction === "pair" && args.deviceId && !args.calName) {
+      args.calName = a; // device name for pairing
+    }
+    else if (args.command === "start-session" && !args.text) {
+      args.text = a; // optional target device id
+    }
+    else if (args.command === "scanner" && !args.subAction) {
+      args.subAction = a.toLowerCase(); // start|stop|state
+    }
+    else if (args.command === "service" && !args.subAction) {
+      args.subAction = a.toLowerCase(); // install|uninstall|status
+    }
+    else if (args.command === "reconnect" && !args.subAction) {
+      args.subAction = a.toLowerCase(); // state|enable|disable|retry|cancel
     }
     else if (args.command === "calibrations"  && !args.subAction) {
       // calibrations [list|get|create|update|delete] [<id-or-name>]
@@ -1043,7 +1252,14 @@ ${m("health hr [--start --end] [--limit N]",            "query heart rate sample
 ${m("health steps [--start --end] [--limit N]",         "query step counts")}
 ${m("health metrics --metric-type <t> [--start --end]", "query scalar health metrics (restingHeartRate, hrv, vo2Max, …)")}
 ${m("health metric-types",                              "list all stored metric types")}
+${m("health location [--start --end] [--limit N]",     "query GPS fixes from iOS CoreLocation (lat, lon, altitude, speed)")}
 ${m('health sync \'{"sleep":[...]}\'',                  "push HealthKit data from iOS companion (JSON payload)")}
+${m("oura",                                            "Oura Ring status — check token and connectivity")}
+${m("oura sync [--start YYYY-MM-DD --end YYYY-MM-DD]", "sync Oura Ring data for a date range (default: last 30 days)")}
+${m("oura status",                                     "check Oura Ring token and user info")}
+${m("calendar [--start --end]",                         "list calendar events in a range (default: now → +7 days)")}
+${m("calendar status",                                  "show calendar access status and platform (macos/linux/windows)")}
+${m("calendar permission",                              "request calendar access — macOS only, shows system dialog")}
 ${m("dnd [on|off]",                                    "show DND automation status; 'on'/'off' force-overrides immediately")}
 ${m("llm status",                                      "LLM server status (stopped/loading/running)")}
 ${m("llm start",                                     "load active model and start LLM inference server")}
@@ -1067,6 +1283,7 @@ ${m("llm logs",                                      "print last 500 LLM server 
 ${m("llm chat",                                       "interactive multi-turn chat REPL; type /help inside for commands")}
 ${m('llm chat "message"',                            "single-shot: send one message, stream the reply, and exit")}
 ${m("listen [--seconds <n>]",                        "listen for broadcast events (default: 5s)")}
+${m("subscribe [--events <csv>] [--fields <csv>] [--max-hz <n>]", "set broadcast filter for this connection")}
 ${m("hooks",                                         "list Proactive Hooks (scenario + last trigger metadata)")}
 ${m("hooks list",                                    "list raw hook rules (name, keywords, threshold, …)")}
 ${m("hooks add <name> [--keywords …] [opts]",       "add a new hook rule")}
@@ -1076,6 +1293,28 @@ ${m("hooks disable <name>",                          "disable a hook")}
 ${m("hooks update <name> [--keywords …] [opts]",    "update fields on an existing hook")}
 ${m('hooks suggest "kw1,kw2"',                       "suggest threshold from matching labels + recent EEG embeddings")}
 ${m("hooks log [--limit <n>] [--offset <n>]",       "show hook trigger audit history from hooks.sqlite")}
+${m("iroh info",                                     "show iroh endpoint + auth summary")}
+${m("iroh totp list|create|qr|revoke",               "manage iroh TOTP credentials")}
+${m("iroh clients list|register|revoke|scope|permissions", "manage iroh clients and permissions")}
+${m("iroh scope-groups",                             "list available permission scope groups")}
+${m("iroh phone-invite",                             "generate a phone pairing invitation")}
+${m("tokens [list]",                                 "list all access tokens (redacted)")}
+${m("tokens create <name> [--acl admin|read_only|data|stream] [--expiry week|month|quarter|never]", "create a new token")}
+${m("tokens revoke <id>",                            "revoke an access token")}
+${m("tokens delete <id>",                            "permanently delete an access token")}
+${m("tokens refresh",                                "rotate the default daemon token")}
+${m("devices [list]",                                "list discovered BLE devices")}
+${m("devices pair <id> [name]",                      "pair a BLE device by ID")}
+${m("devices forget <id>",                           "forget a paired device")}
+${m("devices set-preferred <id>",                    "set the preferred device for auto-connect")}
+${m("start-session [target]",                         "start a recording session (optional BLE device target)")}
+${m("stop-session",                                  "stop the current recording session")}
+${m("scanner start|stop|state",                      "control the BLE device scanner")}
+${m("reconnect state|enable|disable|retry|cancel",   "manage auto-reconnect behavior")}
+${m("service install|uninstall|status",              "manage the daemon background service")}
+${m("lsl",                                           "discover available LSL streams")}
+${m("daemon-version",                                "show daemon version and protocol info")}
+${m("daemon-log [--limit <n>]",                      "show recent daemon log lines")}
 ${m("raw '{\"command\":\"status\"}'",                "send raw JSON, print full response")}
 
 ${BOLD}OPTIONS${RESET}
@@ -1123,6 +1362,12 @@ ${BOLD}OPTIONS${RESET}
   ${YELLOW}--version${RESET}         print CLI version and exit
 
   ${YELLOW}--metric-type <t>${RESET} (health metrics) metric type (e.g. ${GREEN}restingHeartRate${RESET}, ${GREEN}hrv${RESET}, ${GREEN}vo2Max${RESET})
+  ${YELLOW}--otp <code>${RESET}       (iroh clients register) TOTP code from authenticator
+  ${YELLOW}--totp-id <id>${RESET}    (iroh clients register) optional TOTP credential id
+  ${YELLOW}--scope <read|full>${RESET} (iroh clients register/scope) permission scope
+  ${YELLOW}--acl <level>${RESET}     (tokens create) access level: admin | read_only | data | stream (default: admin)
+  ${YELLOW}--expiry <period>${RESET}  (tokens create) expiry period: week | month | quarter | never (default: never)
+  ${YELLOW}--device-id <id>${RESET}  (devices pair/forget/set-preferred) device identifier
 
 ${BOLD}EXAMPLES${RESET}
   When parameters are omitted, the CLI auto-selects ranges from your session
@@ -1249,7 +1494,7 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#${RESET}
   ${DIM}#   20260315/20260315143025.webp${RESET}
   ${DIM}#      time:       3/15/2026, 2:30:25 PM${RESET}
-  ${DIM}#      app:        VS Code  window: skill — cli.ts${RESET}
+  ${DIM}#      app:        VS Code  window: skill — neuroskill${RESET}
   ${DIM}#      similarity: 87%${RESET}
   ${DIM}#      ocr:        error[E0308]: mismatched types expected…${RESET}
 
@@ -1293,7 +1538,7 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#     results with EEG:    3${RESET}
   ${DIM}#${RESET}
   ${DIM}#     20260315/20260315143025.webp${RESET}
-  ${DIM}#        time:       3/15/2026, 2:30:25 PM   app: VS Code  window: skill — cli.ts${RESET}
+  ${DIM}#        time:       3/15/2026, 2:30:25 PM   app: VS Code  window: skill — neuroskill${RESET}
   ${DIM}#        similarity: 87%${RESET}
   ${DIM}#        EEG session: 3/15/2026, 2:00:00 PM → 3:00:00 PM  (1h 0m)  device: Muse-A1B2${RESET}
   ${DIM}#        labels (2):${RESET}
@@ -1420,7 +1665,16 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}$${RESET} npx neuroskill health metrics --metric-type restingHeartRate
   ${DIM}$${RESET} npx neuroskill health metrics --metric-type hrv --json | jq '.results[].value'
   ${DIM}$${RESET} npx neuroskill health metric-types                 ${DIM}# list all metric types${RESET}
+  ${DIM}$${RESET} npx neuroskill health location                     ${DIM}# GPS fixes (last 24h)${RESET}
+  ${DIM}$${RESET} npx neuroskill health location --limit 50 --json | jq '.results[] | {lat:.latitude,lon:.longitude,ts:.timestamp}'
   ${DIM}$${RESET} npx neuroskill health sync '{"steps":[{"start_utc":1740000000,"end_utc":1740086400,"count":9500}]}'
+
+  ${BOLD}oura${RESET} — Oura Ring cloud data sync
+  ${DIM}$${RESET} npx neuroskill oura                                   ${DIM}# check token + connectivity${RESET}
+  ${DIM}$${RESET} npx neuroskill oura status                            ${DIM}# user info from Oura API${RESET}
+  ${DIM}$${RESET} npx neuroskill oura sync                              ${DIM}# sync last 30 days${RESET}
+  ${DIM}$${RESET} npx neuroskill oura sync --start 2026-03-01 --end 2026-03-28  ${DIM}# custom range${RESET}
+  ${DIM}$${RESET} npx neuroskill oura sync --json                       ${DIM}# raw JSON response${RESET}
   ${DIM}# Output (summary):${RESET}
   ${DIM}#   ⚡ health  last 24h${RESET}
   ${DIM}#${RESET}
@@ -1448,6 +1702,24 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}#   { "status": "complete", "result": {${RESET}
   ${DIM}#     "points": [{ "x": 1.23, "y": -0.45, "z": 2.01, "session": "A", "utc": 1740380105 }, ...],${RESET}
   ${DIM}#     "n_a": 513, "n_b": 541, "dim": 3, "elapsed_ms": 8432 } }${RESET}
+
+  ${BOLD}calendar${RESET} — calendar events from OS calendar (macOS EventKit, Linux/Windows iCal files)
+  ${DIM}$${RESET} npx neuroskill calendar                            ${DIM}# events for the next 7 days${RESET}
+  ${DIM}$${RESET} npx neuroskill calendar --start 1774396800 --end 1774483200  ${DIM}# custom range${RESET}
+  ${DIM}$${RESET} npx neuroskill calendar --json                     ${DIM}# raw JSON${RESET}
+  ${DIM}$${RESET} npx neuroskill calendar --json | jq '.events[] | {title,start_utc,calendar}'
+  ${DIM}$${RESET} npx neuroskill calendar status                     ${DIM}# auth status + platform${RESET}
+  ${DIM}$${RESET} npx neuroskill calendar permission                  ${DIM}# macOS: request system dialog${RESET}
+  ${DIM}# Output (events):${RESET}
+  ${DIM}#   ⚡ calendar  3/25/2026 → 4/1/2026${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#   3 events${RESET}
+  ${DIM}#${RESET}
+  ${DIM}#   Team Standup  [Work]  ↻${RESET}
+  ${DIM}#     3/25/2026  09:00 → 09:30${RESET}
+  ${DIM}#   Sprint Review  [Work]${RESET}
+  ${DIM}#     3/27/2026  14:00 → 15:00${RESET}
+  ${DIM}#     📍 Conference Room B${RESET}
 
   ${BOLD}dnd${RESET} — Do Not Disturb automation status and control
   ${DIM}$${RESET} npx neuroskill dnd                                 ${DIM}# show config + live eligibility state${RESET}
@@ -2364,7 +2636,7 @@ async function cmdNotify(title: string, body?: string): Promise<void> {
   print(`${BOLD}⚡ notify${RESET} ${GREEN}"${title}"${RESET}${body ? ` ${DIM}"${body}"${RESET}` : ""}`);
   const cmd: { command: string; title: string; body?: string } = { command: "notify", title };
   if (body) cmd.body = body;
-  const r = await send(cmd as { command: string; [k: string]: unknown });
+  const r = await send(cmd);
   if (!r.ok) printError(`server returned ok=false: ${r.error}`);
   printResult(r);
 }
@@ -2433,7 +2705,7 @@ async function cmdCalibrations(args: Args): Promise<void> {
   const sub = args.subAction ?? "list";
 
   if (sub === "get") {
-    if (args.id == null) printError("usage: npx neuroskill calibrations get <id>");
+    if (args.id == null) printError("usage: neuroskill calibrations get <id>");
     print(`${BOLD}⚡ calibrations get${RESET} ${CYAN}${args.id}${RESET}`);
     const r = await send({ command: "get_calibration", id: args.id });
     if (!r.ok) printError(`server returned ok=false: ${r.error}`);
@@ -2476,7 +2748,7 @@ async function cmdCalibrations(args: Args): Promise<void> {
     if (args.calBreak != null)     cmd.break_duration_secs = args.calBreak;
     if (args.calAutoStart != null) cmd.auto_start          = args.calAutoStart;
 
-    const r = await send(cmd as { command: string; [k: string]: unknown });
+    const r = await send(cmd as any);
     if (!r.ok) printError(`create failed: ${r.error}`);
 
     if (!jsonMode && r.profile) {
@@ -2507,7 +2779,7 @@ async function cmdCalibrations(args: Args): Promise<void> {
     if (args.calBreak   != null) cmd.break_duration_secs = args.calBreak;
     if (args.calAutoStart != null) cmd.auto_start        = args.calAutoStart;
 
-    const r = await send(cmd as { command: string; [k: string]: unknown });
+    const r = await send(cmd as any);
     if (!r.ok) printError(`update failed: ${r.error}`);
 
     if (!jsonMode && r.profile) {
@@ -2741,7 +3013,7 @@ async function cmdLabel(args: Args): Promise<void> {
  * @param args - Parsed CLI arguments (`text` = query string, `k`, `ef`, `mode`).
  */
 async function cmdSearchLabels(args: Args): Promise<void> {
-  if (!args.text) printError('usage: npx neuroskill search-labels "your query text"');
+  if (!args.text) printError('usage: neuroskill search-labels "your query text"');
   const query = args.text!;
   const k     = args.k    ?? 10;
   const mode  = args.mode ?? "text";
@@ -2881,7 +3153,7 @@ async function cmdSearchImages(args: Args): Promise<void> {
   }
 
   // ── OCR text search modes ───────────────────────────────────────────────
-  if (!args.text) printError('usage: npx neuroskill search-images "your query text" [--mode semantic|substring] [--by-image <path>]');
+  if (!args.text) printError('usage: neuroskill search-images "your query text" [--mode semantic|substring] [--by-image <path>]');
   const query = args.text!;
   const k     = args.k    ?? 20;
   const mode  = args.mode ?? "semantic";
@@ -3049,7 +3321,7 @@ async function cmdScreenshotsForEeg(args: Args): Promise<void> {
  * ```
  */
 async function cmdEegForScreenshots(args: Args): Promise<void> {
-  if (!args.text) printError('usage: npx neuroskill eeg-for-screenshots "your OCR query"');
+  if (!args.text) printError('usage: neuroskill eeg-for-screenshots "your OCR query"');
   const query      = args.text!;
   const k          = args.k ?? 10;
   const windowSecs = args.windowSecs ?? 60;
@@ -3154,7 +3426,7 @@ async function cmdEegForScreenshots(args: Args): Promise<void> {
  * @param args - Parsed CLI arguments. `at` is the target unix timestamp (required).
  */
 async function cmdScreenshotsAround(args: Args): Promise<void> {
-  if (args.at == null) printError('usage: npx neuroskill screenshots-around --at <unix_timestamp> [--seconds <window>]');
+  if (args.at == null) printError('usage: neuroskill screenshots-around --at <unix_timestamp> [--seconds <window>]');
   const timestamp  = args.at!;
   const windowSecs = args.seconds ?? 60;
 
@@ -3222,7 +3494,7 @@ async function cmdScreenshotsAround(args: Args): Promise<void> {
  * @param args - Parsed CLI arguments. `keyword` is the query string (required).
  */
 async function cmdInteractive(args: Args): Promise<void> {
-  if (!args.keyword) printError('usage: npx neuroskill interactive "your keyword"');
+  if (!args.keyword) printError('usage: neuroskill interactive "your keyword"');
 
   const query   = args.keyword!;
   const kText   = args.kText   ?? 5;
@@ -3311,7 +3583,7 @@ async function cmdInteractive(args: Args): Promise<void> {
         }
       }
     } else {
-      print(`\n  ${DIM}No text labels found — annotate some moments with \`npx neuroskill label "..."\` first.${RESET}`);
+      print(`\n  ${DIM}No text labels found — annotate some moments with \`neuroskill label "..."\` first.${RESET}`);
     }
 
     // ── EEG point nodes ───────────────────────────────────────────────────
@@ -3917,6 +4189,7 @@ function progressBar(pct: number, width: number): string {
  * - `steps`          — query step counts
  * - `metrics`        — query scalar health metrics (requires `--metric-type`)
  * - `metric-types`   — list all stored metric types
+ * - `location`       — query GPS fixes from CoreLocation (lat, lon, altitude, speed, accuracy)
  * - `sync`           — push HealthKit data (JSON payload)
  */
 async function cmdHealth(args: Args): Promise<void> {
@@ -3945,6 +4218,7 @@ async function cmdHealth(args: Args): Promise<void> {
       if (r.steps_upserted)       print(`    steps:       ${CYAN}${r.steps_upserted}${RESET}`);
       if (r.mindfulness_upserted) print(`    mindfulness: ${CYAN}${r.mindfulness_upserted}${RESET}`);
       if (r.metrics_upserted)     print(`    metrics:     ${CYAN}${r.metrics_upserted}${RESET}`);
+      if (r.location_upserted)    print(`    location:    ${CYAN}${r.location_upserted}${RESET} fixes`);
     }
     printResult(r);
     return;
@@ -3970,7 +4244,7 @@ async function cmdHealth(args: Args): Promise<void> {
   }
 
   // ── summary ─────────────────────────────────────────────────────────────
-  if (sub === "summary" || !["sleep", "workouts", "hr", "steps", "metrics"].includes(sub)) {
+  if (sub === "summary" || !["sleep", "workouts", "hr", "steps", "metrics", "location"].includes(sub)) {
     const isDefault = args.start == null && args.end == null;
     print(`${BOLD}⚡ health${RESET}  ${DIM}${isDefault ? "last 24h" : `${startUtc}–${endUtc}`}${RESET}`);
 
@@ -3985,6 +4259,8 @@ async function cmdHealth(args: Args): Promise<void> {
     print(`    total steps      ${BOLD}${r.total_steps ?? 0}${RESET}`);
     print(`    mindfulness      ${BOLD}${r.mindfulness_sessions ?? 0}${RESET} sessions`);
     print(`    metrics          ${BOLD}${r.metric_entries ?? 0}${RESET} entries`);
+    if ((r.location_fixes ?? 0) > 0)
+      print(`    location fixes   ${BOLD}${r.location_fixes}${RESET}`);
     print("");
     if ((r.sleep_samples ?? 0) === 0 && (r.workouts ?? 0) === 0 && (r.total_steps ?? 0) === 0) {
       print(`  ${DIM}No HealthKit data found. Sync from the iOS companion app:${RESET}`);
@@ -4002,6 +4278,7 @@ async function cmdHealth(args: Args): Promise<void> {
     hr:       "heart_rate",
     steps:    "steps",
     metrics:  "metrics",
+    location: "location",
   };
   const dataType = typeMap[sub];
   if (!dataType) printError(`unknown health subcommand: "${sub}"`);
@@ -4078,9 +4355,217 @@ async function cmdHealth(args: Args): Promise<void> {
       const ts = new Date(m.timestamp * 1000).toLocaleString();
       print(`  ${BOLD}${m.value}${RESET} ${DIM}${m.unit}${RESET}  ${DIM}${ts}${RESET}`);
     }
+  } else if (dataType === "location") {
+    print("");
+    for (const loc of results) {
+      const ts  = new Date(loc.timestamp * 1000).toLocaleString();
+      const lat = (loc.latitude  as number).toFixed(5);
+      const lon = (loc.longitude as number).toFixed(5);
+      const alt = loc.altitude != null
+        ? `  ${DIM}alt ${(loc.altitude as number).toFixed(0)}m${RESET}` : "";
+      const acc = loc.horizontal_accuracy != null && (loc.horizontal_accuracy as number) >= 0
+        ? `  ${DIM}±${(loc.horizontal_accuracy as number).toFixed(0)}m${RESET}` : "";
+      const spd = loc.speed != null && (loc.speed as number) >= 0
+        ? `  ${DIM}${((loc.speed as number) * 3.6).toFixed(1)} km/h${RESET}` : "";
+      const src = loc.source_id ? `  ${DIM}[${loc.source_id}]${RESET}` : "";
+      print(`  ${CYAN}${lat}, ${lon}${RESET}${alt}${acc}${spd}${src}  ${DIM}${ts}${RESET}`);
+    }
   }
 
   print("");
+  printResult(r);
+}
+
+/**
+ * `oura [sync|status]` — Oura Ring cloud data sync and status.
+ *
+ * Subcommands:
+ * - (none) / `status` — check if Oura token is configured and test connectivity
+ * - `sync`            — fetch Oura Ring data for a date range (default: last 30 days)
+ */
+async function cmdOura(args: Args): Promise<void> {
+  const sub = (args.ouraSub ?? "status").toLowerCase();
+
+  // ── status ──────────────────────────────────────────────────────────────
+  if (sub === "status" || (!args.ouraSub && sub === "status")) {
+    print(`${BOLD}⚡ oura status${RESET}`);
+    const r = await send({ command: "oura_status" });
+    if (jsonMode) { printResult(r); return; }
+
+    print("");
+    if (r.configured) {
+      print(`  token       ${GREEN}configured${RESET}`);
+      if (r.connected) {
+        print(`  connected   ${GREEN}yes${RESET}`);
+        if (r.user) {
+          if (r.user.email)          print(`  email       ${BOLD}${r.user.email}${RESET}`);
+          if (r.user.age)            print(`  age         ${BOLD}${r.user.age}${RESET}`);
+          if (r.user.biological_sex) print(`  sex         ${BOLD}${r.user.biological_sex}${RESET}`);
+        }
+      } else {
+        print(`  connected   ${RED}no${RESET}`);
+        if (r.error) print(`  error       ${DIM}${r.error}${RESET}`);
+      }
+    } else {
+      print(`  token       ${YELLOW}not configured${RESET}`);
+      print("");
+      print(`  ${DIM}Set your Oura personal access token in Settings → Device API → Oura Ring.${RESET}`);
+      print(`  ${DIM}Get a token from: ${RESET}${CYAN}https://cloud.ouraring.com/personal-access-tokens${RESET}`);
+    }
+    print("");
+    printResult(r);
+    return;
+  }
+
+  // ── sync ────────────────────────────────────────────────────────────────
+  if (sub === "sync") {
+    const now = new Date();
+    // Accept both --oura-start/--oura-end (date strings) and --start/--end (unix timestamps → converted)
+    let endDate   = args.ouraEnd   ?? (args.end ? new Date(args.end * 1000).toISOString().split("T")[0] : now.toISOString().split("T")[0]);
+    let startDate = args.ouraStart ?? (args.start ? new Date(args.start * 1000).toISOString().split("T")[0] : new Date(now.getTime() - 30 * 86400 * 1000).toISOString().split("T")[0]);
+
+    print(`${BOLD}⚡ oura sync${RESET}  ${DIM}${startDate} → ${endDate}${RESET}`);
+    const r = await send({ command: "oura_sync", start_date: startDate, end_date: endDate }, 120000);
+    if (jsonMode) { printResult(r); return; }
+
+    if (r.ok) {
+      print("");
+      print(`  ${GREEN}synced from Oura Ring${RESET}`);
+      const f = r.fetched ?? {};
+      const s = r.stored ?? {};
+      if (f.sleep_samples)  print(`    sleep:       ${CYAN}${f.sleep_samples}${RESET} fetched → ${BOLD}${s.sleep_upserted ?? 0}${RESET} stored`);
+      if (f.workouts)       print(`    workouts:    ${CYAN}${f.workouts}${RESET} fetched → ${BOLD}${s.workouts_upserted ?? 0}${RESET} stored`);
+      if (f.heart_rate)     print(`    heart rate:  ${CYAN}${f.heart_rate}${RESET} fetched → ${BOLD}${s.heart_rate_upserted ?? 0}${RESET} stored`);
+      if (f.steps)          print(`    steps:       ${CYAN}${f.steps}${RESET} fetched → ${BOLD}${s.steps_upserted ?? 0}${RESET} stored`);
+      if (f.mindfulness)    print(`    mindfulness: ${CYAN}${f.mindfulness}${RESET} fetched → ${BOLD}${s.mindfulness_upserted ?? 0}${RESET} stored`);
+      if (f.metrics)        print(`    metrics:     ${CYAN}${f.metrics}${RESET} fetched → ${BOLD}${s.metrics_upserted ?? 0}${RESET} stored`);
+    } else {
+      print("");
+      print(`  ${RED}sync failed:${RESET} ${r.error ?? "unknown error"}`);
+    }
+    print("");
+    printResult(r);
+    return;
+  }
+
+  printError(`unknown oura subcommand: "${sub}". Use: oura, oura status, oura sync`);
+}
+
+/**
+ * `calendar [status|permission] [--start --end]`
+ *
+ * Subcommands:
+ * - (none)        — fetch calendar events overlapping the range (default: now → +7 days)
+ * - `status`      — show calendar access status and platform
+ * - `permission`  — request calendar access (macOS: shows system dialog; no-op elsewhere)
+ *
+ * @param args - Parsed CLI args; `calendarSub` is `"status"` | `"permission"` | undefined.
+ */
+async function cmdCalendar(args: Args): Promise<void> {
+  const sub = (args.calendarSub ?? "").toLowerCase();
+
+  // ── status ───────────────────────────────────────────────────────────────
+  if (sub === "status") {
+    print(`${BOLD}⚡ calendar status${RESET}`);
+    const r = await send({ command: "calendar_status" });
+    if (jsonMode) { printResult(r); return; }
+    print("");
+    print(`  platform  ${BOLD}${r.platform ?? "unknown"}${RESET}`);
+    const statusColors: Record<string, string> = {
+      authorized:    GREEN,
+      denied:        RED,
+      restricted:    YELLOW,
+      not_determined: DIM,
+    };
+    const sc = statusColors[r.status] ?? DIM;
+    print(`  access    ${sc}${r.status ?? "unknown"}${RESET}`);
+    if (r.status === "not_determined") {
+      print("");
+      print(`  ${DIM}Run ${RESET}${BOLD}calendar permission${RESET}${DIM} to request access.${RESET}`);
+    }
+    print("");
+    printResult(r);
+    return;
+  }
+
+  // ── permission ───────────────────────────────────────────────────────────
+  if (sub === "permission") {
+    print(`${BOLD}⚡ calendar permission${RESET}`);
+    // 60 s timeout: the macOS permission dialog can take up to 30 s
+    // server-side; give extra headroom for slow responses.
+    const r = await send({ command: "calendar_request_permission" }, 60000);
+    if (jsonMode) { printResult(r); return; }
+    print("");
+    if (r.granted) {
+      print(`  ${GREEN}access granted${RESET}  status=${r.status}`);
+    } else {
+      print(`  ${RED}access denied${RESET}  status=${r.status}`);
+      print(`  ${DIM}Open System Settings → Privacy & Security → Calendars to grant access.${RESET}`);
+    }
+    print("");
+    printResult(r);
+    return;
+  }
+
+  // ── events (default) ─────────────────────────────────────────────────────
+  const now = Math.floor(Date.now() / 1000);
+  const startUtc = args.start ?? now;
+  const endUtc   = args.end   ?? (now + 7 * 86400);
+
+  const startLabel = new Date(startUtc * 1000).toLocaleDateString();
+  const endLabel   = new Date(endUtc   * 1000).toLocaleDateString();
+  print(`${BOLD}⚡ calendar${RESET}  ${DIM}${startLabel} → ${endLabel}${RESET}`);
+
+  const r = await send({ command: "calendar_events", start_utc: startUtc, end_utc: endUtc });
+
+  if (r.error) {
+    if (!jsonMode) {
+      print("");
+      print(`  ${RED}${r.error}${RESET}`);
+      if (r.error.includes("access_denied")) {
+        print(`  ${DIM}Run ${RESET}${BOLD}calendar permission${RESET}${DIM} to request access.${RESET}`);
+      }
+      print("");
+    }
+    printResult(r);
+    return;
+  }
+
+  if (jsonMode) { printResult(r); return; }
+
+  const events: any[] = r.events ?? [];
+  print("");
+  if (events.length === 0) {
+    print(`  ${DIM}No events in this range.${RESET}`);
+    print("");
+    printResult(r);
+    return;
+  }
+
+  print(`  ${CYAN}${events.length}${RESET} event${events.length === 1 ? "" : "s"}`);
+  print("");
+
+  for (const ev of events) {
+    const start = new Date(ev.start_utc * 1000);
+    const end   = new Date(ev.end_utc   * 1000);
+
+    const dateStr = ev.all_day
+      ? start.toLocaleDateString()
+      : `${start.toLocaleDateString()}  ${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} → ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+
+    const statusStr =
+      ev.status === "tentative"  ? ` ${YELLOW}(tentative)${RESET}` :
+      ev.status === "cancelled"  ? ` ${DIM}(cancelled)${RESET}` : "";
+    const calStr = ev.calendar ? `  ${DIM}[${ev.calendar}]${RESET}` : "";
+    const recurStr = ev.recurrence ? `  ${DIM}↻${RESET}` : "";
+
+    print(`  ${BOLD}${ev.title}${RESET}${statusStr}${calStr}${recurStr}`);
+    print(`    ${DIM}${dateStr}${RESET}`);
+    if (ev.location) print(`    ${DIM}📍 ${ev.location}${RESET}`);
+    if (ev.notes)    print(`    ${DIM}${ev.notes.split("\n")[0]}${RESET}`);
+    print("");
+  }
+
   printResult(r);
 }
 
@@ -4349,7 +4834,7 @@ async function cmdHooks(args: Args): Promise<void> {
   }
 
   if (sub === "suggest") {
-    if (!args.text) printError('usage: npx neuroskill hooks suggest "kw1,kw2"');
+    if (!args.text) printError('usage: neuroskill hooks suggest "kw1,kw2"');
     const keywords = (args.text ?? "")
       .split(",")
       .map((s) => s.trim())
@@ -4539,6 +5024,278 @@ async function cmdHooks(args: Args): Promise<void> {
  *
  * @param seconds - How long to listen (default 5 s via `--seconds` flag).
  */
+async function cmdIroh(args: Args): Promise<void> {
+  const g = (args.irohSub || "info").toLowerCase();
+
+  if (g === "info") {
+    const r = await send({ command: "iroh_info" });
+    printJson(r);
+    return;
+  }
+
+  if (g === "totp") {
+    const a = (args.subAction || "list").toLowerCase();
+    if (a === "list") return printJson(await send({ command: "iroh_totp_list" }));
+    if (a === "create") {
+      if (!args.text) printError("usage: neuroskill iroh totp create <name>");
+      return printJson(await send({ command: "iroh_totp_create", name: args.text }));
+    }
+    if (a === "qr") {
+      if (!args.text) printError("usage: neuroskill iroh totp qr <id>");
+      return printJson(await send({ command: "iroh_totp_qr", id: args.text }));
+    }
+    if (a === "revoke") {
+      if (!args.text) printError("usage: neuroskill iroh totp revoke <id>");
+      return printJson(await send({ command: "iroh_totp_revoke", id: args.text }));
+    }
+    printError(`unknown iroh totp action: ${a}`);
+  }
+
+  if (g === "clients") {
+    const a = (args.subAction || "list").toLowerCase();
+    if (a === "list") return printJson(await send({ command: "iroh_clients_list" }));
+    if (a === "register") {
+      if (!args.text || !args.otp) {
+        printError("usage: neuroskill iroh clients register <endpoint_id> --otp <code> [--name <name>] [--scope read|full] [--totp-id <id>]");
+      }
+      return printJson(await send({
+        command: "iroh_client_register",
+        endpoint_id: args.text,
+        otp: args.otp,
+        name: args.calName,
+        totp_id: args.totpId,
+        scope: args.scope ?? "read",
+      }));
+    }
+    if (a === "revoke") {
+      if (!args.text) printError("usage: neuroskill iroh clients revoke <id>");
+      return printJson(await send({ command: "iroh_client_revoke", id: args.text }));
+    }
+    if (a === "scope") {
+      if (!args.text || !args.body) printError("usage: neuroskill iroh clients scope <id> <read|full>");
+      return printJson(await send({ command: "iroh_client_set_scope", id: args.text, scope: args.body }));
+    }
+    if (a === "permissions") {
+      if (!args.text) printError("usage: neuroskill iroh clients permissions <id>");
+      return printJson(await send({ command: "iroh_client_permissions", id: args.text }));
+    }
+    printError(`unknown iroh clients action: ${a}`);
+  }
+
+  if (g === "scope-groups") {
+    return printJson(await send({ command: "iroh_scope_groups" }));
+  }
+
+  if (g === "phone-invite") {
+    const body: Record<string, unknown> = { command: "iroh_phone_invite" };
+    if (args.text) body.endpoint_id = args.text;
+    return printJson(await send(body as any));
+  }
+
+  printError(`unknown iroh group: ${g}`);
+}
+
+// ── Token management ─────────────────────────────────────────────────────────
+
+async function cmdTokens(args: Args): Promise<void> {
+  const action = (args.subAction || "list").toLowerCase();
+
+  if (action === "list") {
+    const r = await restGet("/auth/tokens");
+    if (jsonMode) { console.log(JSON.stringify(r, null, 2)); return; }
+    if (!Array.isArray(r)) { printJson(r); return; }
+    print(`${BOLD}${r.length} token(s)${RESET}`);
+    for (const t of r) {
+      const status = t.revoked ? `${RED}revoked${RESET}` : `${GREEN}active${RESET}`;
+      const exp = t.expires_at ? new Date(t.expires_at * 1000).toISOString() : "never";
+      print(`  ${CYAN}${t.id}${RESET}  ${t.name ?? ""}  acl=${YELLOW}${t.acl}${RESET}  ${status}  expires=${DIM}${exp}${RESET}  preview=${DIM}${t.preview ?? ""}${RESET}`);
+    }
+    return;
+  }
+
+  if (action === "create") {
+    if (!args.tokenName) printError("usage: neuroskill tokens create <name> [--acl admin|read_only|data|stream] [--expiry week|month|quarter|never]");
+    const r = await restPost("/auth/tokens", {
+      name: args.tokenName,
+      acl: args.acl ?? "Admin",
+      expiry: args.expiry ?? "Never",
+    });
+    if (jsonMode) { console.log(JSON.stringify(r, null, 2)); return; }
+    if (r.ok === false) { printError(r.error ?? "failed to create token"); }
+    print(`${GREEN}token created${RESET}`);
+    print(`  id:     ${CYAN}${r.id}${RESET}`);
+    print(`  name:   ${r.name}`);
+    print(`  acl:    ${YELLOW}${r.acl}${RESET}`);
+    print(`  token:  ${BOLD}${r.token}${RESET}`);
+    print(`  ${DIM}(save this token now — it will not be shown again)${RESET}`);
+    return;
+  }
+
+  if (action === "revoke") {
+    if (!args.tokenId) printError("usage: neuroskill tokens revoke <id>");
+    const r = await restPost("/auth/tokens/revoke", { id: args.tokenId });
+    printJson(r);
+    return;
+  }
+
+  if (action === "delete") {
+    if (!args.tokenId) printError("usage: neuroskill tokens delete <id>");
+    const r = await restPost("/auth/tokens/delete", { id: args.tokenId });
+    printJson(r);
+    return;
+  }
+
+  if (action === "refresh") {
+    const r = await restPost("/auth/default-token/refresh");
+    if (jsonMode) { console.log(JSON.stringify(r, null, 2)); return; }
+    if (r.ok) {
+      print(`${GREEN}default token rotated${RESET}`);
+      print(`  new token: ${BOLD}${r.token}${RESET}`);
+      print(`  ${DIM}The auth.token file has been updated. Restart CLI clients to pick up the new token.${RESET}`);
+    } else {
+      printError(r.error ?? "failed to refresh token");
+    }
+    return;
+  }
+
+  printError(`unknown tokens action: ${action}. Use: list, create, revoke, delete, refresh`);
+}
+
+// ── Device management ────────────────────────────────────────────────────────
+
+async function cmdDevices(args: Args): Promise<void> {
+  const action = (args.subAction || "list").toLowerCase();
+
+  if (action === "list") {
+    const r = await restGet("/devices");
+    printJson(r);
+    return;
+  }
+
+  if (action === "pair") {
+    if (!args.deviceId) printError("usage: neuroskill devices pair <device-id> [name]");
+    const body: Record<string, unknown> = { id: args.deviceId };
+    if (args.calName) body.name = args.calName;
+    const r = await restPost("/devices/pair", body);
+    printJson(r);
+    return;
+  }
+
+  if (action === "forget") {
+    if (!args.deviceId) printError("usage: neuroskill devices forget <device-id>");
+    const r = await restPost("/devices/forget", { id: args.deviceId });
+    printJson(r);
+    return;
+  }
+
+  if (action === "set-preferred") {
+    if (!args.deviceId) printError("usage: neuroskill devices set-preferred <device-id>");
+    const r = await restPost("/devices/set-preferred", { id: args.deviceId });
+    printJson(r);
+    return;
+  }
+
+  printError(`unknown devices action: ${action}. Use: list, pair, forget, set-preferred`);
+}
+
+// ── Session control ──────────────────────────────────────────────────────────
+
+async function cmdStartSession(args: Args): Promise<void> {
+  const cmd: Record<string, unknown> = { command: "start_session" };
+  if (args.text) cmd.target = args.text;
+  const r = await send(cmd as any);
+  printJson(r);
+}
+
+async function cmdStopSession(): Promise<void> {
+  printJson(await send({ command: "cancel_session" }));
+}
+
+// ── Scanner control ──────────────────────────────────────────────────────────
+
+async function cmdScanner(args: Args): Promise<void> {
+  const action = (args.subAction || "state").toLowerCase();
+  if (action === "start") return printJson(await restPost("/control/scanner/start"));
+  if (action === "stop") return printJson(await restPost("/control/scanner/stop"));
+  if (action === "state") return printJson(await restGet("/control/scanner/state"));
+  printError(`unknown scanner action: ${action}. Use: start, stop, state`);
+}
+
+// ── Reconnect control ────────────────────────────────────────────────────────
+
+async function cmdReconnect(args: Args): Promise<void> {
+  const action = (args.subAction || "state").toLowerCase();
+  if (action === "state") return printJson(await restGet("/reconnect-state"));
+  if (action === "enable") return printJson(await restPost("/control/enable-reconnect"));
+  if (action === "disable") return printJson(await restPost("/control/disable-reconnect"));
+  if (action === "retry") return printJson(await restPost("/control/retry-connect"));
+  if (action === "cancel") return printJson(await restPost("/control/cancel-retry"));
+  printError(`unknown reconnect action: ${action}. Use: state, enable, disable, retry, cancel`);
+}
+
+// ── Service management ───────────────────────────────────────────────────────
+
+async function cmdService(args: Args): Promise<void> {
+  const action = (args.subAction || "status").toLowerCase();
+  // Service endpoints are at root level, not under /v1
+  const token = loadDaemonToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const doGet = async (p: string) => (await fetch(`${httpBase}${p}`, { headers })).json();
+  const doPost = async (p: string) => (await fetch(`${httpBase}${p}`, { method: "POST", headers, body: "{}" })).json();
+  if (action === "status") return printJson(await doGet("/service/status"));
+  if (action === "install") return printJson(await doPost("/service/install"));
+  if (action === "uninstall") return printJson(await doPost("/service/uninstall"));
+  printError(`unknown service action: ${action}. Use: install, uninstall, status`);
+}
+
+// ── LSL discover ─────────────────────────────────────────────────────────────
+
+async function cmdLsl(): Promise<void> {
+  printJson(await restGet("/lsl/discover"));
+}
+
+// ── Daemon version ───────────────────────────────────────────────────────────
+
+async function cmdDaemonVersion(): Promise<void> {
+  printJson(await restGet("/version"));
+}
+
+// ── Daemon log ───────────────────────────────────────────────────────────────
+
+async function cmdDaemonLog(_args: Args): Promise<void> {
+  const r = await restGet("/log/recent");
+  if (jsonMode) { console.log(JSON.stringify(r, null, 2)); return; }
+  if (r.lines && Array.isArray(r.lines)) {
+    for (const line of r.lines) console.log(line);
+  } else {
+    printJson(r);
+  }
+}
+
+async function cmdSubscribe(args: Args): Promise<void> {
+  const cmd: Record<string, unknown> = { command: "subscribe" };
+  if (args.subEvents) {
+    cmd.events = args.subEvents.split(",").map(s => s.trim());
+  }
+  if (args.subFields) {
+    cmd.fields = args.subFields.split(",").map(s => s.trim());
+  }
+  if (args.maxHz !== undefined) {
+    cmd.max_hz = args.maxHz;
+  }
+
+  const r = await send(cmd as any);
+  if (!r.ok) printError(r.error ?? "subscribe failed");
+  print(`${GREEN}✓${RESET} subscription updated`);
+  if (r.events?.length) print(`  events: ${CYAN}${r.events.join(", ")}${RESET}`);
+  else print(`  events: ${DIM}all${RESET}`);
+  if (r.fields?.length) print(`  fields: ${CYAN}${r.fields.join(", ")}${RESET}`);
+  else print(`  fields: ${DIM}all${RESET}`);
+  print(`  max_hz: ${CYAN}${r.max_hz ?? 0}${RESET} ${DIM}(0 = unlimited)${RESET}`);
+  printResult(r);
+}
+
 async function cmdListen(seconds: number): Promise<void> {
   print(`${BOLD}⚡ listen${RESET} ${DIM}for ${seconds}s…${RESET}\n`);
 
@@ -4623,7 +5380,6 @@ async function cmdListen(seconds: number): Promise<void> {
  */
 // ── LLM image helpers ─────────────────────────────────────────────────────────
 
-import { readFileSync } from "fs";
 import { extname } from "path";
 
 /**
@@ -4767,7 +5523,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── download ─────────────────────────────────────────────────────────────
     case "download": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm download <filename>");
+      if (!filename) printError("usage: neuroskill llm download <filename>");
       print(`${BOLD}🤖 llm download${RESET} ${CYAN}${filename}${RESET} ${DIM}(fire-and-forget — poll 'llm catalog' for progress)${RESET}`);
       const r = await send({ command: "llm_download", filename });
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_download failed"); }
@@ -4779,7 +5535,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── cancel ───────────────────────────────────────────────────────────────
     case "cancel": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm cancel <filename>");
+      if (!filename) printError("usage: neuroskill llm cancel <filename>");
       print(`${BOLD}🤖 llm cancel${RESET} ${CYAN}${filename}${RESET}`);
       const r = await send({ command: "llm_cancel_download", filename });
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_cancel_download failed"); }
@@ -4791,7 +5547,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── delete ───────────────────────────────────────────────────────────────
     case "delete": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm delete <filename>");
+      if (!filename) printError("usage: neuroskill llm delete <filename>");
       print(`${BOLD}🤖 llm delete${RESET} ${CYAN}${filename}${RESET}`);
       const r = await send({ command: "llm_delete", filename });
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_delete failed"); }
@@ -5187,8 +5943,8 @@ async function cmdLlm(args: Args): Promise<void> {
       let filename: string;
       const raw = args.text;
       const addUsage =
-        "usage: npx neuroskill llm add <repo> <filename> [--mmproj <file>]\n" +
-        "       npx neuroskill llm add <hf-url> [--mmproj <file>]\n\n" +
+        "usage: neuroskill llm add <repo> <filename> [--mmproj <file>]\n" +
+        "       neuroskill llm add <hf-url> [--mmproj <file>]\n\n" +
         "  Examples:\n" +
         "    llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf\n" +
         "    llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf --mmproj mmproj-Phi-4-mini-reasoning-BF16.gguf\n" +
@@ -5218,7 +5974,7 @@ async function cmdLlm(args: Args): Promise<void> {
       print(`${BOLD}🤖 llm add${RESET} ${CYAN}${repo!}${RESET} / ${CYAN}${filename!}${RESET}${mmNote}`);
       const payload: Record<string, unknown> = { command: "llm_add_model", repo: repo!, filename: filename!, download: true };
       if (mmproj) payload.mmproj = mmproj;
-      const r = await send(payload as { command: string; [k: string]: unknown });
+      const r = await send(payload as any);
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_add_model failed"); }
       print(`  ${GREEN}✓${RESET} added ${CYAN}${r.filename}${RESET} from ${DIM}${r.repo}${RESET}`);
       if (r.mmproj) print(`  ${GREEN}✓${RESET} mmproj ${CYAN}${r.mmproj}${RESET}`);
@@ -5230,7 +5986,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── select ─────────────────────────────────────────────────────────────
     case "select": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm select <filename>");
+      if (!filename) printError("usage: neuroskill llm select <filename>");
       print(`${BOLD}🤖 llm select${RESET} ${CYAN}${filename}${RESET}`);
       const r = await send({ command: "llm_select_model", filename });
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_select_model failed"); }
@@ -5243,7 +5999,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── mmproj ───────────────────────────────────────────────────────────────
     case "mmproj": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm mmproj <filename|none>");
+      if (!filename) printError("usage: neuroskill llm mmproj <filename|none>");
       const actual = filename!.toLowerCase() === "none" ? "" : filename!;
       print(`${BOLD}🤖 llm mmproj${RESET} ${CYAN}${filename}${RESET}`);
       const r = await send({ command: "llm_select_mmproj", filename: actual });
@@ -5258,7 +6014,7 @@ async function cmdLlm(args: Args): Promise<void> {
     case "autoload-mmproj": {
       const val = args.text?.toLowerCase();
       if (!val || !["on", "off", "true", "false", "1", "0"].includes(val)) {
-        printError("usage: npx neuroskill llm autoload-mmproj <on|off>");
+        printError("usage: neuroskill llm autoload-mmproj <on|off>");
       }
       const enabled = ["on", "true", "1"].includes(val!);
       print(`${BOLD}🤖 llm autoload-mmproj${RESET} ${enabled ? GREEN + "on" : GRAY + "off"}${RESET}`);
@@ -5272,7 +6028,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── pause ────────────────────────────────────────────────────────────────
     case "pause": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm pause <filename>");
+      if (!filename) printError("usage: neuroskill llm pause <filename>");
       print(`${BOLD}🤖 llm pause${RESET} ${CYAN}${filename}${RESET}`);
       const r = await send({ command: "llm_pause_download", filename });
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_pause_download failed"); }
@@ -5284,7 +6040,7 @@ async function cmdLlm(args: Args): Promise<void> {
     // ── resume ───────────────────────────────────────────────────────────────
     case "resume": {
       const filename = args.text;
-      if (!filename) printError("usage: npx neuroskill llm resume <filename>");
+      if (!filename) printError("usage: neuroskill llm resume <filename>");
       print(`${BOLD}🤖 llm resume${RESET} ${CYAN}${filename}${RESET}`);
       const r = await send({ command: "llm_resume_download", filename });
       if (!r.ok) { printResult(r); printError(r.error ?? "llm_resume_download failed"); }
@@ -5399,7 +6155,7 @@ async function main(): Promise<void> {
   if (noColorMode || jsonMode) applyNoColor();
 
   if (args.command === "version") {
-    console.log(`npx neuroskill ${CLI_VERSION}`);
+    console.log(`neuroskill ${CLI_VERSION}`);
     process.exit(0);
   }
   if (args.command === "help") showHelp();
@@ -5447,11 +6203,11 @@ async function main(): Promise<void> {
         await cmdSessions(args);
         break;
       case "say":
-        if (!args.text) printError("usage: npx neuroskill say \"text to speak\" [--voice <name>]");
+        if (!args.text) printError("usage: neuroskill say \"text to speak\" [--voice <name>]");
         await cmdSay(args.text!, args.voice);
         break;
       case "notify":
-        if (!args.text) printError("usage: npx neuroskill notify \"title\" [\"body\"]");
+        if (!args.text) printError("usage: neuroskill notify \"title\" [\"body\"]");
         await cmdNotify(args.text!, args.body);
         break;
       case "calibrations":
@@ -5469,11 +6225,17 @@ async function main(): Promise<void> {
       case "health":
         await cmdHealth(args);
         break;
+      case "oura":
+        await cmdOura(args);
+        break;
+      case "calendar":
+        await cmdCalendar(args);
+        break;
       case "dnd":
         await cmdDnd(args);
         break;
       case "label":
-        if (!args.text) printError("usage: npx neuroskill label \"your annotation text\"");
+        if (!args.text) printError("usage: neuroskill label \"your annotation text\"");
         await cmdLabel(args);
         break;
       case "search-labels":
@@ -5515,14 +6277,56 @@ async function main(): Promise<void> {
         }
         await cmdListen(args.seconds ?? 5);
         break;
+      case "subscribe":
+        if (transport === "http") {
+          printError(
+            "subscribe requires WebSocket (subscriptions are per-connection).\n" +
+            "  Use --ws to force WebSocket, or omit --http for auto-transport."
+          );
+        }
+        await cmdSubscribe(args);
+        break;
       case "hooks":
         await cmdHooks(args);
+        break;
+      case "iroh":
+        await cmdIroh(args);
+        break;
+      case "start-session":
+        await cmdStartSession(args);
+        break;
+      case "stop-session":
+        await cmdStopSession();
+        break;
+      case "tokens":
+        await cmdTokens(args);
+        break;
+      case "devices":
+        await cmdDevices(args);
+        break;
+      case "scanner":
+        await cmdScanner(args);
+        break;
+      case "reconnect":
+        await cmdReconnect(args);
+        break;
+      case "service":
+        await cmdService(args);
+        break;
+      case "lsl":
+        await cmdLsl();
+        break;
+      case "daemon-version":
+        await cmdDaemonVersion();
+        break;
+      case "daemon-log":
+        await cmdDaemonLog(args);
         break;
       case "llm":
         await cmdLlm(args);
         break;
       case "raw":
-        if (!args.rawJson) printError("usage: npx neuroskill raw '{\"command\":\"status\"}'");
+        if (!args.rawJson) printError("usage: neuroskill raw '{\"command\":\"status\"}'");
         await cmdRaw(args.rawJson!);
         break;
       default:
