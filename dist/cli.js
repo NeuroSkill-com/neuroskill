@@ -1875,6 +1875,8 @@ ${BOLD}EXAMPLES${RESET}
   ${DIM}$${RESET} npx neuroskill raw '{"command":"sessions"}' --json
   ${DIM}$${RESET} npx neuroskill raw '{"command":"search","start_utc":1740412800,"end_utc":1740415500,"k":3}'
   ${DIM}# Output: full JSON response from server, same as calling the command directly${RESET}
+
+  Learn more at ${CYAN}https://www.neuroskill.com${RESET}
 `);
     process.exit(0);
 }
@@ -6382,7 +6384,7 @@ async function main() {
     if (noColorMode || jsonMode)
         applyNoColor();
     if (args.command === "version") {
-        console.log(`neuroskill ${CLI_VERSION}`);
+        console.log(`neuroskill ${CLI_VERSION}\nhttps://www.neuroskill.com`);
         process.exit(0);
     }
     if (args.command === "help")
