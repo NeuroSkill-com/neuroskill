@@ -124,6 +124,25 @@ const CLI_VERSION = "1.3.0";
  *   lsl                            Discover available LSL streams
  *   daemon-version                 Show daemon version and protocol info
  *   daemon-log [--limit N]         Show recent daemon log lines
+ *   history stats                  Recording history stats (total sessions, time)
+ *   history daily [--limit N]      Daily recording minutes (default: last 30 days)
+ *   history find --start <utc>     Find session CSV for a timestamp
+ *   history delete <csv_path>      Delete a session file
+ *   metrics --start --end          Session metrics for a time range
+ *   timeseries --start --end       Timeseries data for a time range (band powers, scores)
+ *   sleep-stages --start --end     Sleep stage epochs for a time range
+ *   csv-metrics <csv_path>         Metrics for a single CSV file
+ *   day-metrics <paths> [--limit]  Aggregated metrics for multiple CSVs
+ *   location <csv_path> --start --end  GPS location points for a session
+ *   embedding-count --start --end  Count EEG embeddings in a time range
+ *   labels list                    List all labels
+ *   labels update <id> "text"      Update a label's text/context
+ *   labels delete <id>             Delete a label
+ *   labels search-by-eeg --start --end  Find labels near EEG embeddings
+ *   labels index-stats             Label HNSW index statistics
+ *   labels rebuild-index           Rebuild label HNSW indices
+ *   index stats                    Global search index statistics
+ *   index rebuild                  Rebuild global search index
  *   llm status                     LLM server status (stopped/loading/running)
  *   llm start                      Load active model and start LLM inference server
  *   llm stop                       Stop LLM inference server and free GPU memory
@@ -1131,6 +1150,67 @@ function parseArgs() {
         else if (args.command === "start-session" && !args.text) {
             args.text = a; // optional target device id
         }
+        else if (args.command === "history" && !args.subAction) {
+            args.subAction = a.toLowerCase(); // stats|daily|find|delete
+        }
+        else if (args.command === "history" && args.subAction === "delete" && !args.text) {
+            args.text = a; // csv_path
+        }
+        else if (args.command === "csv-metrics" && !args.text) {
+            args.text = a; // csv_path
+        }
+        else if (args.command === "day-metrics" && !args.text) {
+            args.text = a; // csv_paths (comma-separated)
+        }
+        else if (args.command === "location" && !args.text) {
+            args.text = a; // csv_path
+        }
+        else if (args.command === "labels" && !args.subAction) {
+            args.subAction = a.toLowerCase(); // list|update|delete|search-by-eeg|index-stats|rebuild-index
+        }
+        else if (args.command === "labels" && args.subAction === "update" && args.id == null) {
+            const n = Number(a);
+            if (isNaN(n)) {
+                console.error(`error: labels update requires a numeric id (got: ${JSON.stringify(a)})`);
+                process.exit(1);
+            }
+            args.id = n;
+        }
+        else if (args.command === "labels" && args.subAction === "update" && !args.text) {
+            args.text = a; // new label text
+        }
+        else if (args.command === "labels" && args.subAction === "delete" && args.id == null) {
+            const n = Number(a);
+            if (isNaN(n)) {
+                console.error(`error: labels delete requires a numeric id (got: ${JSON.stringify(a)})`);
+                process.exit(1);
+            }
+            args.id = n;
+        }
+        else if (args.command === "index" && !args.subAction) {
+            args.subAction = a.toLowerCase(); // stats|rebuild
+        }
+        else if (args.command === "settings" && !args.subAction) {
+            args.subAction = a.toLowerCase();
+        }
+        else if (args.command === "settings" && !args.text) {
+            args.text = a; // JSON value for set operations
+        }
+        else if (args.command === "activity" && !args.subAction) {
+            args.subAction = a.toLowerCase();
+        }
+        else if (args.command === "models" && !args.subAction) {
+            args.subAction = a.toLowerCase();
+        }
+        else if (args.command === "screenshots" && !args.subAction) {
+            args.subAction = a.toLowerCase();
+        }
+        else if (args.command === "skills" && !args.subAction) {
+            args.subAction = a.toLowerCase();
+        }
+        else if (args.command === "web-cache" && !args.subAction) {
+            args.subAction = a.toLowerCase();
+        }
         else if (args.command === "scanner" && !args.subAction) {
             args.subAction = a.toLowerCase(); // start|stop|state
         }
@@ -1293,6 +1373,25 @@ ${m("service install|uninstall|status", "manage the daemon background service")}
 ${m("lsl", "discover available LSL streams")}
 ${m("daemon-version", "show daemon version and protocol info")}
 ${m("daemon-log [--limit <n>]", "show recent daemon log lines")}
+${m("history stats", "recording history stats (total sessions, hours)")}
+${m("history daily [--limit <days>]", "daily recording minutes (default: 30 days)")}
+${m("history find --start <utc>", "find session CSV for a given unix timestamp")}
+${m("history delete <csv_path>", "delete a session file")}
+${m("metrics --start <utc> --end <utc>", "session metrics for a time range")}
+${m("timeseries --start <utc> --end <utc>", "timeseries data (band powers, scores) for a range")}
+${m("sleep-stages --start <utc> --end <utc>", "sleep stage epochs for a time range")}
+${m("csv-metrics <csv_path>", "metrics for a single CSV session file")}
+${m("day-metrics <path1,path2,...> [--limit <pts>]", "aggregated metrics for multiple CSV files")}
+${m("location <csv_path> --start <utc> --end <utc>", "GPS location points for a session window")}
+${m("embedding-count --start <utc> --end <utc>", "count EEG embeddings in a time range")}
+${m("labels list", "list all labels")}
+${m("labels update <id> \"text\" [--context ...]", "update a label's text and context")}
+${m("labels delete <id>", "delete a label")}
+${m("labels search-by-eeg --start --end [--k <n>]", "find labels near EEG embeddings in a range")}
+${m("labels index-stats", "label HNSW index statistics")}
+${m("labels rebuild-index", "rebuild label HNSW indices")}
+${m("index stats", "global EEG search index statistics")}
+${m("index rebuild", "rebuild global search index")}
 ${m("raw '{\"command\":\"status\"}'", "send raw JSON, print full response")}
 
 ${BOLD}OPTIONS${RESET}
@@ -5088,6 +5187,217 @@ async function cmdDaemonLog(_args) {
         printJson(r);
     }
 }
+// ── History ──────────────────────────────────────────────────────────────────
+async function cmdHistory(args) {
+    const action = (args.subAction || "stats").toLowerCase();
+    if (action === "stats")
+        return printJson(await restGet("/history/stats"));
+    if (action === "daily") {
+        const days = args.limit ?? 30;
+        return printJson(await restPost("/history/daily-recording-mins", { days }));
+    }
+    if (action === "find") {
+        if (args.start == null)
+            printError("usage: history find --start <unix_timestamp>");
+        return printJson(await restPost("/history/find-session", { timestampUnix: args.start }));
+    }
+    if (action === "delete") {
+        if (!args.text)
+            printError("usage: history delete <csv_path>");
+        return printJson(await restPost("/history/sessions/delete", { csvPath: args.text }));
+    }
+    printError(`unknown history action: ${action}. Use: stats, daily, find, delete`);
+}
+// ── Analysis ─────────────────────────────────────────────────────────────────
+async function cmdMetrics(args) {
+    if (args.start == null || args.end == null)
+        printError("usage: metrics --start <utc> --end <utc>");
+    printJson(await restPost("/analysis/metrics", { startUtc: args.start, endUtc: args.end }));
+}
+async function cmdTimeseries(args) {
+    if (args.start == null || args.end == null)
+        printError("usage: timeseries --start <utc> --end <utc>");
+    printJson(await restPost("/analysis/timeseries", { startUtc: args.start, endUtc: args.end }));
+}
+async function cmdSleepStages(args) {
+    if (args.start == null || args.end == null)
+        printError("usage: sleep-stages --start <utc> --end <utc>");
+    printJson(await restPost("/analysis/sleep", { startUtc: args.start, endUtc: args.end }));
+}
+async function cmdCsvMetrics(args) {
+    if (!args.text)
+        printError("usage: csv-metrics <csv_path>");
+    printJson(await restPost("/analysis/csv-metrics", { csvPath: args.text }));
+}
+async function cmdDayMetrics(args) {
+    if (!args.text)
+        printError("usage: day-metrics <csv_path>[,<csv_path>,...] [--limit <max_ts_points>]");
+    const csvPaths = args.text.split(",").map(s => s.trim());
+    printJson(await restPost("/analysis/day-metrics", { csvPaths, maxTsPoints: args.limit ?? 360 }));
+}
+async function cmdLocation(args) {
+    if (!args.text || args.start == null || args.end == null)
+        printError("usage: location <csv_path> --start <utc> --end <utc>");
+    printJson(await restPost("/analysis/location", { csvPath: args.text, startUtc: args.start, endUtc: args.end }));
+}
+async function cmdEmbeddingCount(args) {
+    if (args.start == null || args.end == null)
+        printError("usage: embedding-count --start <utc> --end <utc>");
+    printJson(await restPost("/analysis/embedding-count", { startUtc: args.start, endUtc: args.end }));
+}
+// ── Labels CRUD ──────────────────────────────────────────────────────────────
+async function cmdLabels(args) {
+    const action = (args.subAction || "list").toLowerCase();
+    if (action === "list")
+        return printJson(await restGet("/labels"));
+    if (action === "update") {
+        if (args.id == null || !args.text)
+            printError("usage: labels update <id> \"new text\" [--context \"...\"]");
+        return printJson(await restPost(`/labels/${args.id}`, { text: args.text, context: args.context }));
+    }
+    if (action === "delete") {
+        if (args.id == null)
+            printError("usage: labels delete <id>");
+        const token = loadDaemonToken();
+        const headers = { "Content-Type": "application/json" };
+        if (token)
+            headers.Authorization = `Bearer ${token}`;
+        const res = await fetch(`${httpBase}/v1/labels/${args.id}`, { method: "DELETE", headers });
+        return printJson(await res.json());
+    }
+    if (action === "search-by-eeg") {
+        if (args.start == null || args.end == null)
+            printError("usage: labels search-by-eeg --start <utc> --end <utc> [--k <n>]");
+        return printJson(await restPost("/labels/search-by-eeg", { startUtc: args.start, endUtc: args.end, k: args.k ?? 5 }));
+    }
+    if (action === "index-stats")
+        return printJson(await restGet("/labels/index/stats"));
+    if (action === "rebuild-index")
+        return printJson(await restPost("/labels/index/rebuild"));
+    printError(`unknown labels action: ${action}. Use: list, update, delete, search-by-eeg, index-stats, rebuild-index`);
+}
+// ── Search index ─────────────────────────────────────────────────────────────
+async function cmdIndex(args) {
+    const action = (args.subAction || "stats").toLowerCase();
+    if (action === "stats")
+        return printJson(await restGet("/search/global-index/stats"));
+    if (action === "rebuild")
+        return printJson(await restPost("/search/global-index/rebuild"));
+    printError(`unknown index action: ${action}. Use: stats, rebuild`);
+}
+// ── Settings ─────────────────────────────────────────────────────────────────
+async function cmdSettings(args) {
+    const action = (args.subAction || "list").toLowerCase();
+    const getSet = async (path, value) => {
+        if (value != null) {
+            try {
+                printJson(await restPost(path, JSON.parse(value)));
+            }
+            catch {
+                printJson(await restPost(path, { value }));
+            }
+        }
+        else {
+            printJson(await restGet(path));
+        }
+    };
+    switch (action) {
+        case "filter": return getSet("/settings/filter-config", args.text);
+        case "storage": return getSet("/settings/storage-format", args.text);
+        case "sleep-config": return getSet("/settings/sleep-config", args.text);
+        case "tts": return getSet("/settings/neutts-config", args.text);
+        case "ws": return getSet("/settings/ws-config", args.text);
+        case "umap": return getSet("/settings/umap-config", args.text);
+        case "inference": return getSet("/settings/exg-inference-device", args.text);
+        case "overlap": return getSet("/settings/embedding-overlap", args.text);
+        case "gpu": return printJson(await restGet("/settings/gpu-stats"));
+        case "device-log": return printJson(await restGet("/settings/device-log"));
+        case "openbci": return getSet("/settings/openbci-config", args.text);
+        case "device-api": return getSet("/settings/device-api-config", args.text);
+        case "scanner-config": return getSet("/settings/scanner-config", args.text);
+        case "location": return getSet("/settings/location-enabled", args.text);
+        default: printError(`unknown settings key: ${action}. Use: filter, storage, sleep-config, tts, ws, umap, inference, overlap, gpu, device-log, openbci, device-api, scanner-config, location`);
+    }
+}
+// ── Activity ─────────────────────────────────────────────────────────────────
+async function cmdActivity(args) {
+    const action = (args.subAction || "bands").toLowerCase();
+    if (action === "bands")
+        return printJson(await restGet("/activity/latest-bands"));
+    if (action === "window")
+        return printJson(await restGet("/activity/current-window"));
+    if (action === "input")
+        return printJson(await restGet("/activity/last-input"));
+    if (action === "windows")
+        return printJson(await restPost("/activity/recent-windows", { limit: args.limit ?? 20 }));
+    printError(`unknown activity action: ${action}. Use: bands, window, input, windows`);
+}
+// ── EXG Models ───────────────────────────────────────────────────────────────
+async function cmdModels(args) {
+    const action = (args.subAction || "status").toLowerCase();
+    if (action === "status")
+        return printJson(await restGet("/models/status"));
+    if (action === "config")
+        return printJson(await restGet("/models/config"));
+    if (action === "catalog")
+        return printJson(await restGet("/models/exg-catalog"));
+    if (action === "reembed")
+        return printJson(await restPost("/models/trigger-reembed"));
+    if (action === "estimate-reembed")
+        return printJson(await restGet("/models/estimate-reembed"));
+    if (action === "download-weights")
+        return printJson(await restPost("/models/trigger-weights-download"));
+    if (action === "cancel-download")
+        return printJson(await restPost("/models/cancel-weights-download"));
+    if (action === "rebuild-index")
+        return printJson(await restPost("/models/rebuild-index"));
+    printError(`unknown models action: ${action}. Use: status, config, catalog, reembed, estimate-reembed, download-weights, cancel-download, rebuild-index`);
+}
+// ── Screenshots ──────────────────────────────────────────────────────────────
+async function cmdScreenshots(args) {
+    const action = (args.subAction || "config").toLowerCase();
+    if (action === "config")
+        return printJson(await restGet("/settings/screenshot/config"));
+    if (action === "metrics")
+        return printJson(await restGet("/settings/screenshot/metrics"));
+    if (action === "ocr-status")
+        return printJson(await restGet("/settings/screenshot/ocr-ready"));
+    if (action === "download-ocr")
+        return printJson(await restPost("/settings/screenshot/download-ocr"));
+    if (action === "rebuild")
+        return printJson(await restPost("/settings/screenshot/rebuild-embeddings"));
+    if (action === "estimate-reembed")
+        return printJson(await restGet("/settings/screenshot/estimate-reembed"));
+    if (action === "dir")
+        return printJson(await restGet("/settings/screenshot/dir"));
+    printError(`unknown screenshots action: ${action}. Use: config, metrics, ocr-status, download-ocr, rebuild, estimate-reembed, dir`);
+}
+// ── Skills ───────────────────────────────────────────────────────────────────
+async function cmdSkills(args) {
+    const action = (args.subAction || "list").toLowerCase();
+    if (action === "list")
+        return printJson(await restGet("/skills/list"));
+    if (action === "sync")
+        return printJson(await restPost("/skills/sync-now"));
+    if (action === "disabled")
+        return printJson(await restGet("/skills/disabled"));
+    if (action === "last-sync")
+        return printJson(await restGet("/skills/last-sync"));
+    if (action === "license")
+        return printJson(await restGet("/skills/license"));
+    printError(`unknown skills action: ${action}. Use: list, sync, disabled, last-sync, license`);
+}
+// ── Web Cache ────────────────────────────────────────────────────────────────
+async function cmdWebCache(args) {
+    const action = (args.subAction || "stats").toLowerCase();
+    if (action === "stats")
+        return printJson(await restGet("/settings/web-cache/stats"));
+    if (action === "list")
+        return printJson(await restGet("/settings/web-cache/list"));
+    if (action === "clear")
+        return printJson(await restPost("/settings/web-cache/clear"));
+    printError(`unknown web-cache action: ${action}. Use: stats, list, clear`);
+}
 async function cmdSubscribe(args) {
     const cmd = { command: "subscribe" };
     if (args.subEvents) {
@@ -6144,6 +6454,54 @@ async function main() {
                 break;
             case "daemon-log":
                 await cmdDaemonLog(args);
+                break;
+            case "history":
+                await cmdHistory(args);
+                break;
+            case "metrics":
+                await cmdMetrics(args);
+                break;
+            case "timeseries":
+                await cmdTimeseries(args);
+                break;
+            case "sleep-stages":
+                await cmdSleepStages(args);
+                break;
+            case "csv-metrics":
+                await cmdCsvMetrics(args);
+                break;
+            case "day-metrics":
+                await cmdDayMetrics(args);
+                break;
+            case "location":
+                await cmdLocation(args);
+                break;
+            case "embedding-count":
+                await cmdEmbeddingCount(args);
+                break;
+            case "labels":
+                await cmdLabels(args);
+                break;
+            case "index":
+                await cmdIndex(args);
+                break;
+            case "settings":
+                await cmdSettings(args);
+                break;
+            case "activity":
+                await cmdActivity(args);
+                break;
+            case "models":
+                await cmdModels(args);
+                break;
+            case "screenshots":
+                await cmdScreenshots(args);
+                break;
+            case "skills":
+                await cmdSkills(args);
+                break;
+            case "web-cache":
+                await cmdWebCache(args);
                 break;
             case "llm":
                 await cmdLlm(args);

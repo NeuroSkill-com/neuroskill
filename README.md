@@ -21,8 +21,9 @@
 9. [Examples](#examples)
 10. [Project Structure](#project-structure)
 11. [Building from Source](#building-from-source)
-12. [How to Cite](#how-to-cite)
-13. [License](#license)
+12. [End-to-End Testing](#end-to-end-testing)
+13. [How to Cite](#how-to-cite)
+14. [License](#license)
 
 ---
 
@@ -349,6 +350,386 @@ npm run dev          # run directly with tsx (no build needed)
 ```
 
 TypeScript target is **ES2022 / CommonJS**, Node ≥ 18.
+
+---
+
+## End-to-End Testing
+
+The script `scripts/e2e-neuroskill-daemon.sh` exercises every neuroskill CLI command and REST endpoint against a live `skill-daemon`. It starts a **fresh daemon** with an isolated data directory, records two virtual EEG sessions, then runs 198 tests covering the full API surface.
+
+### Running
+
+```bash
+# Build daemon + run all tests (default)
+./scripts/e2e-neuroskill-daemon.sh
+
+# Skip Rust build (daemon binary already compiled)
+./scripts/e2e-neuroskill-daemon.sh --no-build
+
+# Keep the daemon running after tests (for manual inspection)
+./scripts/e2e-neuroskill-daemon.sh --no-build --keep-daemon
+
+# Use a custom isolated data directory
+./scripts/e2e-neuroskill-daemon.sh --skill-dir /tmp/my-e2e
+```
+
+### What it tests
+
+| Section | Tests |
+|---------|-------|
+| Virtual device setup | start virtual EEG source, LSL discover, pair, record two sessions |
+| Core CLI commands | `status`, `sessions`, `session`, `label`, `search-labels`, `say`, `notify` |
+| Sleep & schedule | `sleep-schedule` |
+| Health | HealthKit summary, metric-types |
+| DND | status, on/off |
+| Hooks | list, log, statuses, log-count, suggest-keywords, suggest-distances |
+| LLM | status, catalog, downloads, logs, fit, refresh, start/stop, chat CRUD, selection |
+| Calibrations | list, create, update, delete |
+| Iroh | info, TOTP CRUD, clients CRUD, scope-groups, phone-invite |
+| Access tokens | list, create, revoke, delete |
+| Devices / Scanner / Reconnect | list, state, enable/disable |
+| LSL | discover, config, idle-timeout, iroh tunnel, virtual source, auto-connect |
+| History & Analysis | stats, daily, metrics, timeseries, sleep-stages, embedding-count, find, csv-metrics |
+| Compare & Search | WS compare, REST compare, EEG search, search compare, UMAP 3D projection |
+| Labels | list, index-stats, search-by-eeg, create/update/delete (REST), search, index rebuild |
+| Search index | stats, global-index rebuild |
+| Settings | GPU, filter, storage, inference, overlap, scanner, api-token, location, and 15+ more |
+| Activity | bands, window, tracking configs, current-window, last-input, recent-windows, input-buckets |
+| EXG Models | status, config, catalog, estimate-reembed, rebuild-index, exg-catalog |
+| Screenshots | config, metrics, OCR, search-text, search-image, search-vector, around, for-eeg, eeg-for |
+| Skills | list, last-sync, disabled, refresh-interval, sync-on-launch, license, sync-now |
+| Web Cache | stats, list |
+| Session control | start-session, stop-session |
+| Oura & Calendar | status (structural) |
+| UI settings | accent-color, daily-goal, goal-notified-date, main-window-auto-fit |
+| WebSocket infra | ws-port, ws-clients, ws-request-log, events push |
+| Auth | default-token refresh |
+| Device | serial-ports |
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SKILL_DATA_DIR` | (set by script) | Isolated data directory for the daemon |
+| `SKILL_VIRTUAL_EMBED=1` | (set by script) | Forces the EXG embedding pipeline for virtual EEG devices, enabling full-pipeline tests (compare, search, UMAP) |
+
+### Sample output
+
+```
+━━ Daemon setup ━━
+  ℹ  using isolated skill dir: /tmp/skill-e2e
+  ℹ  starting daemon…
+  ℹ  daemon started (PID 86464)
+  ℹ  enabling screenshot capture (interval=3s, session_only=false)…
+  ℹ  waiting 10s for screenshot captures…
+  ℹ  screenshots captured so far: 1
+
+━━ Virtual device ━━
+  ✅ virtual EEG source started
+  ✅ virtual stream discovered
+  ✅ virtual stream paired
+  ℹ  recording session A for 15 seconds…
+  ℹ  stopping session A, starting session B…
+  ℹ  recording session B for 15 seconds…
+  ✅ two sessions recorded
+
+━━ Core commands ━━
+  ✅ status
+  ✅ sessions
+  ✅ session 0
+  ✅ label
+  ✅ search-labels
+  ✅ say
+  ✅ notify
+
+━━ Sleep & schedule ━━
+  ✅ sleep-schedule
+
+━━ Health ━━
+  ✅ health
+  ✅ health metric-types
+
+━━ DND ━━
+  ✅ dnd status
+  ✅ dnd off
+
+━━ Hooks ━━
+  ✅ hooks list
+  ✅ hooks log
+  ✅ hooks statuses
+  ✅ hooks log-count
+  ✅ hooks suggest-keywords
+  ✅ hooks suggest-distances
+
+━━ LLM ━━
+  ✅ llm status
+  ✅ llm catalog
+  ✅ llm downloads
+  ✅ llm logs
+  ✅ llm fit (fits present)
+  ✅ llm refresh
+  ⏭  llm start (no model available in clean env)
+  ✅ llm stop
+
+━━ LLM chat & selection ━━
+  ✅ llm chat sessions
+  ✅ llm chat archived-sessions
+  ✅ llm chat new-session
+  ✅ llm chat rename
+  ✅ llm chat archive
+  ✅ llm chat unarchive
+  ✅ llm chat delete
+  ✅ llm active-model
+  ✅ llm active-mmproj
+  ✅ llm autoload-mmproj
+  ✅ settings llm-config
+
+━━ Calibrations ━━
+  ✅ calibrations list
+  ✅ calibrations create
+  ✅ calibrations update
+  ✅ calibrations delete
+
+━━ Iroh ━━
+  ✅ iroh info
+  ✅ iroh totp list
+  ✅ iroh clients list
+  ✅ iroh scope-groups
+
+━━ Access tokens (REST) ━━
+  ✅ tokens list
+  ✅ tokens create
+  ✅ tokens revoke
+  ✅ tokens delete
+
+━━ Devices (REST) ━━
+  ✅ devices list
+
+━━ Scanner (REST) ━━
+  ✅ scanner state
+
+━━ Reconnect (REST) ━━
+  ✅ reconnect state
+  ✅ reconnect enable
+  ✅ reconnect disable
+
+━━ Service (REST) ━━
+  ✅ service status
+
+━━ LSL (REST) ━━
+  ✅ lsl discover
+  ✅ lsl config
+  ✅ lsl idle-timeout
+  ✅ lsl iroh status
+  ✅ lsl virtual source running
+
+━━ History & Analysis (REST) ━━
+  ✅ history stats
+  ✅ history daily
+  ✅ metrics
+  ✅ timeseries
+  ✅ sleep-stages
+  ✅ embedding-count
+  ✅ history find
+  ✅ csv-metrics
+
+━━ Compare & Search ━━
+  ✅ compare (WS)
+  ✅ compare (REST /analysis/compare)
+  ✅ search (WS)
+  ✅ search (REST /search/eeg)
+  ✅ search compare (REST A vs B embeddings)
+  ✅ umap (3D projection)
+
+━━ Labels CRUD (REST) ━━
+  ✅ labels list
+  ✅ labels index-stats
+  ✅ labels search-by-eeg
+
+━━ Search Index (REST) ━━
+  ✅ index stats
+
+━━ Settings (REST) ━━
+  ✅ settings gpu
+  ✅ settings filter
+  ✅ settings storage
+  ✅ settings inference
+  ✅ settings overlap
+  ✅ settings scanner-config
+
+━━ Activity (REST) ━━
+  ✅ activity bands
+  ✅ activity window
+
+━━ EXG Models (REST) ━━
+  ✅ models status
+  ✅ models config
+  ✅ models catalog
+  ✅ models estimate-reembed
+
+━━ Screenshots (REST) ━━
+  ✅ screenshots config
+  ✅ screenshots metrics
+  ✅ screenshots ocr-status
+  ✅ screenshots dir
+  ✅ screenshots estimate-reembed
+  ✅ screenshots search-text
+  ✅ screenshots search-image
+  ✅ screenshots search-vector
+  ✅ screenshots-around
+  ✅ screenshots-for-eeg
+  ✅ eeg-for-screenshots
+  ✅ screenshots download-ocr (structural)
+  ✅ screenshots rebuild-embeddings (structural)
+
+━━ Skills (REST) ━━
+  ✅ skills list
+  ✅ skills last-sync
+  ✅ skills disabled
+
+━━ Web Cache (REST) ━━
+  ✅ web-cache stats
+
+━━ Daemon info (REST) ━━
+  ✅ daemon-version
+  ✅ daemon-log
+
+━━ Session control ━━
+  ✅ stop-session
+  ✅ start-session
+  ✅ stop-session (after start)
+
+━━ Oura & Calendar (structural) ━━
+  ✅ oura status
+  ✅ calendar status
+
+━━ Raw command ━━
+  ✅ raw status
+
+━━ Search — images & global index ━━
+  ✅ search-images
+  ✅ search global-index stats
+
+━━ Activity (extended REST) ━━
+  ✅ activity tracking active-window config
+  ✅ activity tracking input config
+  ✅ activity current-window
+  ✅ activity last-input
+  ✅ activity latest-bands
+  ✅ activity recent-windows
+  ✅ activity recent-input
+  ✅ activity input-buckets
+
+━━ Additional settings (REST) ━━
+  ✅ settings filter-config
+  ✅ settings storage-format
+  ✅ settings embedding-overlap
+  ✅ settings inference-device
+  ✅ settings exg-inference-device
+  ✅ settings neutts-config
+  ✅ settings tts-preload
+  ✅ settings sleep-config
+  ✅ settings ws-config
+  ✅ settings openbci-config
+  ✅ settings device-api-config
+  ✅ settings scanner-config (REST)
+  ✅ settings umap-config
+  ✅ settings location-enabled
+  ✅ settings update-check-interval
+  ✅ settings hf-endpoint
+  ✅ settings device-log
+
+━━ DND (extended REST) ━━
+  ✅ dnd config
+  ✅ dnd active
+  ✅ dnd status (REST)
+  ✅ dnd focus-modes
+  ✅ dnd test
+
+━━ UI settings (REST) ━━
+  ✅ ui accent-color
+  ✅ ui daily-goal
+  ✅ ui goal-notified-date
+  ✅ ui main-window-auto-fit
+
+━━ Skills (extended REST) ━━
+  ✅ skills refresh-interval
+  ✅ skills sync-on-launch
+  ✅ skills license
+
+━━ Web Cache (extended REST) ━━
+  ✅ web-cache list
+
+━━ WebSocket & events infra ━━
+  ✅ ws-port
+  ✅ ws-clients
+  ✅ ws-request-log
+  ✅ events push
+
+━━ Auth (extended REST) ━━
+  ✅ auth default-token refresh
+
+━━ Device (extended REST) ━━
+  ✅ device serial-ports
+
+━━ Calibration (extended REST) ━━
+  ✅ calibration active
+  ✅ calibration auto-start-pending
+
+━━ Models (extended REST) ━━
+  ✅ models estimate-reembed (REST)
+  ✅ models exg-catalog
+
+━━ LSL (extended REST) ━━
+  ✅ lsl iroh status (extended)
+
+━━ Location & day metrics ━━
+  ✅ location
+  ✅ day-metrics
+
+━━ History (extended REST) ━━
+  ✅ history find-session
+  ✅ history sessions POST
+
+━━ Labels CRUD (extended REST) ━━
+  ✅ labels search (REST)
+  ✅ labels index rebuild
+
+━━ Search (extended REST) ━━
+  ✅ search global-index rebuild
+
+━━ Iroh (extended REST) ━━
+  ✅ iroh phone-invite (structural)
+
+━━ LLM (extended REST) ━━
+  ✅ llm chat last-session
+  ✅ llm server switch-model (structural)
+  ✅ llm server switch-mmproj (structural)
+  ✅ llm abort-stream (structural)
+  ✅ llm cancel-tool-call (structural)
+
+━━ LSL (extended write REST) ━━
+  ✅ lsl auto-connect
+  ✅ lsl discover (REST GET)
+  ✅ lsl iroh start (structural)
+  ✅ lsl iroh stop (structural)
+
+━━ Models (extended write REST) ━━
+  ✅ models config GET
+  ✅ models rebuild-index
+
+━━ Calibration (extended write REST) ━━
+  ✅ calibration profiles list
+
+━━ Settings (write structural) ━━
+  ✅ settings api-token
+  ✅ settings location-test
+  ✅ skills sync-now
+
+╔═══════════════════════════════════════════════╗
+║  192 passed, 0 failed, 6 skipped  (198 total) ║
+╚═══════════════════════════════════════════════╝
+```
 
 ---
 
