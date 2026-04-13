@@ -807,7 +807,7 @@ function parseArgs() {
         "--bedtime", "--wake", "--preset",
         "--metric-type", "--oura-start", "--oura-end", "--otp", "--totp-id", "--scope",
         "--events", "--fields", "--max-hz",
-        "--acl", "--expiry", "--device-id",
+        "--acl", "--expiry", "--device-id", "--device",
     ]);
     let i = 0;
     while (i < argv.length) {
@@ -1013,6 +1013,14 @@ function parseArgs() {
         else if (a === "--device-id") {
             args.deviceId = argv[++i];
         }
+        else if (a === "--device") {
+            const val = argv[++i]?.toLowerCase();
+            if (val !== "gpu" && val !== "cpu") {
+                console.error(`error: --device requires "gpu" or "cpu" (got: ${JSON.stringify(val)})`);
+                process.exit(1);
+            }
+            args.device = val;
+        }
         else if (a === "--max-hz") {
             const raw = argv[++i];
             const n = Number(raw);
@@ -1051,6 +1059,9 @@ function parseArgs() {
             args.body = a;
         }
         else if (args.command === "raw" && !args.rawJson) {
+            args.rawJson = a;
+        }
+        else if (args.command === "batch" && !args.rawJson) {
             args.rawJson = a;
         }
         else if (args.command === "llm" && !args.subAction) {
@@ -1320,7 +1331,7 @@ ${m("calendar status", "show calendar access status and platform (macos/linux/wi
 ${m("calendar permission", "request calendar access — macOS only, shows system dialog")}
 ${m("dnd [on|off]", "show DND automation status; 'on'/'off' force-overrides immediately")}
 ${m("llm status", "LLM server status (stopped/loading/running)")}
-${m("llm start", "load active model and start LLM inference server")}
+${m("llm start [--device gpu|cpu]", "load active model and start LLM inference server")}
 ${m("llm stop", "stop LLM inference server and free GPU memory")}
 ${m("llm catalog", "show model catalog with download states")}
 ${m("llm add <repo> <filename>", "add an external HF model to the catalog and download it")}
@@ -1351,6 +1362,7 @@ ${m("hooks disable <name>", "disable a hook")}
 ${m("hooks update <name> [--keywords …] [opts]", "update fields on an existing hook")}
 ${m('hooks suggest "kw1,kw2"', "suggest threshold from matching labels + recent EEG embeddings")}
 ${m("hooks log [--limit <n>] [--offset <n>]", "show hook trigger audit history from hooks.sqlite")}
+${m("connect", "check connection status and guide through setup")}
 ${m("iroh info", "show iroh endpoint + auth summary")}
 ${m("iroh totp list|create|qr|revoke", "manage iroh TOTP credentials")}
 ${m("iroh clients list|register|revoke|scope|permissions", "manage iroh clients and permissions")}
@@ -1825,6 +1837,8 @@ ${BOLD}EXAMPLES${RESET}
   ${BOLD}llm${RESET} — LLM inference server management + chat
   ${DIM}$${RESET} npx neuroskill llm status
   ${DIM}$${RESET} npx neuroskill llm start           ${DIM}# load active model (may take seconds)${RESET}
+  ${DIM}$${RESET} npx neuroskill llm start --device gpu  ${DIM}# force GPU inference${RESET}
+  ${DIM}$${RESET} npx neuroskill llm start --device cpu  ${DIM}# force CPU-only inference${RESET}
   ${DIM}$${RESET} npx neuroskill llm stop
   ${DIM}$${RESET} npx neuroskill llm catalog
   ${DIM}$${RESET} npx neuroskill llm add bartowski/Phi-4-mini-reasoning-GGUF Phi-4-mini-reasoning-Q4_K_M.gguf
@@ -4926,6 +4940,83 @@ async function cmdHooks(args) {
  *
  * @param seconds - How long to listen (default 5 s via `--seconds` flag).
  */
+/**
+ * `neuroskill connect` — friendly connection status and setup helper.
+ *
+ * Checks if the daemon is reachable locally, shows iroh info if available,
+ * and guides the user through TOTP setup if needed.
+ */
+async function cmdConnect() {
+    const configDir = process.env.XDG_CONFIG_HOME
+        || (process.platform === "win32"
+            ? (0, path_1.join)(process.env.APPDATA || (0, path_1.join)((0, os_1.homedir)(), "AppData", "Roaming"))
+            : (0, path_1.join)((0, os_1.homedir)(), process.platform === "darwin" ? "Library/Application Support" : ".config"));
+    const tokenPath = (0, path_1.join)(configDir, "skill", "daemon", "auth.token");
+    // 1. Check local daemon
+    const token = loadDaemonToken();
+    const hasToken = !!token;
+    // 2. Try to reach daemon
+    let daemonReachable = false;
+    let daemonStatus = 0;
+    const base = httpBase || `http://127.0.0.1:${DAEMON_PORT}`;
+    try {
+        const headers = {};
+        if (token)
+            headers.Authorization = `Bearer ${token}`;
+        const res = await fetch(`${base}/healthz`, {
+            signal: AbortSignal.timeout(3000),
+            headers,
+        });
+        daemonReachable = res.ok;
+        daemonStatus = res.status;
+    }
+    catch { /* unreachable */ }
+    // 3. Check iroh status
+    let irohActive = false;
+    if (daemonReachable) {
+        try {
+            const irohInfo = await send({ command: "iroh_info" });
+            irohActive = !!(irohInfo && typeof irohInfo === "object" && irohInfo.ok !== false);
+        }
+        catch { /* unavailable */ }
+    }
+    if (jsonMode) {
+        printResult({
+            ok: true,
+            token: hasToken,
+            token_path: tokenPath,
+            daemon_reachable: daemonReachable,
+            daemon_url: base,
+            iroh_active: irohActive,
+        });
+        return;
+    }
+    print(`${BOLD}Connection Status${RESET}\n`);
+    if (hasToken) {
+        print(`${GREEN}✓${RESET} Auth token found at ${DIM}${tokenPath}${RESET}`);
+    }
+    else {
+        print(`${YELLOW}!${RESET} No auth token found locally`);
+    }
+    if (daemonReachable) {
+        print(`${GREEN}✓${RESET} Daemon reachable on ${CYAN}${base}${RESET}`);
+    }
+    else if (daemonStatus > 0) {
+        print(`${YELLOW}!${RESET} Daemon responded with HTTP ${daemonStatus}`);
+    }
+    else {
+        print(`${RED}✗${RESET} Daemon not reachable on ${base}`);
+        print(`\n  Start it with: ${CYAN}skill-daemon${RESET}`);
+    }
+    if (irohActive) {
+        print(`\n${BOLD}iroh${RESET}`);
+        print(`${GREEN}✓${RESET} iroh endpoint active`);
+        print(`${DIM}  Run ${RESET}${CYAN}neuroskill iroh totp create "my-client"${RESET}${DIM} to create a TOTP credential for remote pairing${RESET}`);
+    }
+    else if (daemonReachable) {
+        print(`\n${DIM}iroh: not available${RESET}`);
+    }
+}
 async function cmdIroh(args) {
     const g = (args.irohSub || "info").toLowerCase();
     if (g === "info") {
@@ -5561,7 +5652,7 @@ function buildUserMessage(text, imageParts) {
  *
  * Subcommands:
  *   status                  Print server state (stopped/loading/running), model, context size
- *   start                   Load the active model and start the inference server
+ *   start [--device gpu|cpu] Load the active model and start the inference server
  *   stop                    Stop the server and free GPU/CPU memory
  *   catalog                 List all models with download states and active selections
  *   download <filename>     Download a GGUF model by filename (fire-and-forget; poll catalog for progress)
@@ -5595,6 +5686,10 @@ async function cmdLlm(args) {
         }
         // ── start ────────────────────────────────────────────────────────────────
         case "start": {
+            if (args.device) {
+                print(`${DIM}  switching inference device → ${args.device}${RESET}`);
+                await restPost("/settings/inference-device", { value: args.device });
+            }
             print(`${BOLD}🤖 llm start${RESET} ${DIM}(loading model — this may take several seconds)${RESET}`);
             const r = await send({ command: "llm_start" }, 120_000);
             if (!r.ok) {
@@ -6506,10 +6601,32 @@ async function main() {
             case "llm":
                 await cmdLlm(args);
                 break;
+            case "batch": {
+                const batchJson = args.rawJson;
+                if (!batchJson)
+                    printError("usage: neuroskill batch '[{\"command\":\"status\"},{\"command\":\"sessions\"}]'");
+                let cmds;
+                try {
+                    cmds = JSON.parse(batchJson);
+                }
+                catch {
+                    printError(`invalid JSON: ${batchJson}`);
+                    return;
+                }
+                if (!Array.isArray(cmds))
+                    printError("batch argument must be a JSON array");
+                print(`${BOLD}⚡ batch${RESET} ${DIM}${cmds.length} command(s)${RESET}`);
+                const r = await restPost("/batch", { commands: cmds });
+                printResult(r);
+                break;
+            }
             case "raw":
                 if (!args.rawJson)
                     printError("usage: neuroskill raw '{\"command\":\"status\"}'");
                 await cmdRaw(args.rawJson);
+                break;
+            case "connect":
+                await cmdConnect();
                 break;
             default:
                 printError(`unknown command: "${args.command}". Run with --help to see available commands.`);

@@ -21,9 +21,10 @@
 9. [Examples](#examples)
 10. [Project Structure](#project-structure)
 11. [Building from Source](#building-from-source)
-12. [End-to-End Testing](#end-to-end-testing)
-13. [How to Cite](#how-to-cite)
-14. [License](#license)
+12. [Running the Daemon](#running-the-daemon)
+13. [End-to-End Testing](#end-to-end-testing)
+14. [How to Cite](#how-to-cite)
+15. [License](#license)
 
 ---
 
@@ -184,6 +185,8 @@ The CLI probes WebSocket first and silently falls back to HTTP. Informational me
 | `llm add <repo> <file>` | Add an external HF model and download it |
 | `llm select <file>` | Set the active text model |
 | `llm chat` / `llm chat "msg"` | Interactive multi-turn chat REPL or single-shot |
+| `connect` | Check connection status, auth token, and iroh — guide through setup |
+| `batch '[{...},...]'` | Send multiple commands in one request via `POST /v1/batch` |
 | `raw '{"command":"..."}'` | Send arbitrary JSON and print full response |
 
 ---
@@ -353,24 +356,89 @@ TypeScript target is **ES2022 / CommonJS**, Node ≥ 18.
 
 ---
 
-## End-to-End Testing
+## Running the Daemon
 
-The script `scripts/e2e-neuroskill-daemon.sh` exercises every neuroskill CLI command and REST endpoint against a live `skill-daemon`. It starts a **fresh daemon** with an isolated data directory, records two virtual EEG sessions, then runs 198 tests covering the full API surface.
-
-### Running
+The `npm run daemon` command builds and starts `skill-daemon` with developer-friendly defaults.
 
 ```bash
-# Build daemon + run all tests (default)
-./scripts/e2e-neuroskill-daemon.sh
+# Build + start on default port (127.0.0.1:18444)
+npm run daemon
 
-# Skip Rust build (daemon binary already compiled)
-./scripts/e2e-neuroskill-daemon.sh --no-build
+# With virtual EEG device for testing (starts LSL source + recording)
+npm run daemon -- --virtual
 
-# Keep the daemon running after tests (for manual inspection)
-./scripts/e2e-neuroskill-daemon.sh --no-build --keep-daemon
+# Restart quickly (kill existing, skip build)
+npm run daemon -- --no-build --force
 
-# Use a custom isolated data directory
-./scripts/e2e-neuroskill-daemon.sh --skill-dir /tmp/my-e2e
+# Listen on all interfaces (LAN-accessible)
+npm run daemon -- --host 0.0.0.0
+
+# Custom port, debug build
+npm run daemon -- --port 9000 --debug
+
+# Clean isolated data dir (wiped on exit) + virtual EEG
+npm run daemon -- --clean --virtual
+```
+
+| Flag | Description |
+|------|-------------|
+| `--port N` / `-p N` | Listen port (default `18444`) |
+| `--host ADDR` | Bind address: `127.0.0.1` (default, localhost only) or `0.0.0.0` (all interfaces) |
+| `--virtual` | Start virtual EEG device (LSL), pair it, and begin recording |
+| `--embed` | Enable EXG embeddings for virtual EEG data |
+| `--force` / `-f` | Kill all running daemon instances before starting |
+| `--clean` | Use a fresh temp data directory (wiped on exit) |
+| `--no-build` | Skip `cargo build` (use existing binary) |
+| `--debug` | Build debug profile instead of release |
+| `--no-sign` | Skip macOS code signing |
+
+The daemon streams logs with a `│` prefix. Press `ctrl+c` to stop gracefully.
+
+### Authentication
+
+The daemon generates an auth token on first start:
+
+| Platform | Token path |
+|----------|------------|
+| macOS | `~/Library/Application Support/skill/daemon/auth.token` |
+| Linux | `~/.config/skill/daemon/auth.token` |
+| Windows | `%APPDATA%\skill\daemon\auth.token` |
+
+- **Localhost**: neuroskill CLI reads the token file automatically — no setup needed.
+- **LAN**: Copy the token to the remote machine, or pass it via `neuroskill connect`.
+- **Remote (iroh)**: Use TOTP pairing — run `neuroskill iroh totp create "my-client"` on the server, then register from the client.
+
+### Batch API
+
+`POST /v1/batch` accepts up to 20 commands in a single request:
+
+```bash
+curl -s -X POST http://127.0.0.1:18444/v1/batch \
+  -H "Authorization: Bearer $(cat ~/Library/Application\ Support/skill/daemon/auth.token)" \
+  -H "Content-Type: application/json" \
+  -d '{"commands":[{"command":"status"},{"command":"sessions"}]}'
+```
+
+Or via CLI:
+
+```bash
+neuroskill batch '[{"command":"status"},{"command":"sessions"}]'
+```
+
+---
+
+## End-to-End Testing
+
+Two e2e test scripts exercise the full stack against a live daemon. Both start a **fresh daemon** with an isolated data directory and clean up on exit.
+
+### neuroskill ↔ daemon
+
+`scripts/e2e-neuroskill-daemon.sh` — tests every CLI command and REST endpoint. Records two virtual EEG sessions and runs 200+ tests.
+
+```bash
+./scripts/e2e-neuroskill-daemon.sh                        # build + test
+./scripts/e2e-neuroskill-daemon.sh --no-build              # skip build
+./scripts/e2e-neuroskill-daemon.sh --no-build --keep-daemon # keep daemon after
 ```
 
 ### What it tests
@@ -726,9 +794,60 @@ The script `scripts/e2e-neuroskill-daemon.sh` exercises every neuroskill CLI com
   ✅ settings location-test
   ✅ skills sync-now
 
-╔═══════════════════════════════════════════════╗
-║  192 passed, 0 failed, 6 skipped  (198 total) ║
-╚═══════════════════════════════════════════════╝
+╔══════════════════════════════════════════╗
+║  196 passed, 0 failed, 6 skipped  (202 total) ║
+╚══════════════════════════════════════════╝
+```
+
+### neuroloop ↔ neuroskill ↔ daemon
+
+`scripts/e2e-neuroloop-daemon.sh` — tests the full neuroloop integration: connectivity, EEG metrics exchange, label creation/search, context signals, slash command equivalents, LLM registration flow, memory tools, cross-modal features, batch API, and the `connect` command.
+
+```bash
+./scripts/e2e-neuroloop-daemon.sh                        # build + test
+./scripts/e2e-neuroloop-daemon.sh --no-build              # skip build
+```
+
+Sample output:
+
+```
+━━ Neuroloop connectivity ━━
+  ✅ daemon healthz reachable
+  ✅ neuroskill CLI connects to daemon
+  ✅ auth token valid
+
+━━ EEG metrics exchange ━━
+  ✅ status snapshot (neuroloop injects this every turn)
+  ✅ session 0 metrics (context.ts fetches for session signals)
+  ✅ sessions list
+  ✅ activity bands (EXG panel data)
+
+━━ Label exchange ━━
+  ✅ label create (neuroskill_label tool)
+  ✅ search-labels (context.ts keyword signal)
+  ✅ labels list
+
+━━ Slash command equivalents ━━
+  ✅ /exg-session equivalent
+  ✅ /hooks add
+  ✅ /hooks remove
+  ✅ /say
+  ✅ /notify
+
+━━ Skill-LLM registration flow ━━
+  ✅ /llm/status (root alias for skill-llm.ts)
+  ✅ /v1/llm/server/status (canonical)
+  ✅ /v1/models (OpenAI-compatible)
+
+━━ Batch endpoint ━━
+  ✅ batch (status + sessions)
+
+━━ Connect command ━━
+  ✅ neuroskill connect
+
+╔══════════════════════════════════════════════════════════════╗
+║  58 passed, 0 failed, 1 skipped  (59 total)  ║
+╚══════════════════════════════════════════════════════════════╝
 ```
 
 ---
