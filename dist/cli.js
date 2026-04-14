@@ -1,38 +1,5 @@
 #!/usr/bin/env npx tsx
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -291,13 +258,41 @@ let MAGENTA = "\x1b[35m";
 let BOLD = "\x1b[1m";
 let DIM = "\x1b[2m";
 let RESET = "\x1b[0m";
+let HOTPINK = "\x1b[38;2;255;20;147m";
+let DIMPINK = "\x1b[38;2;180;80;130m";
 /**
  * Zero-out all ANSI escape constants so no color codes reach stdout/stderr.
  * Called once at startup when NO_COLOR env var is set, stdout is not a TTY,
  * or the user passes `--no-color`.
  */
 function applyNoColor() {
-    GRAY = GREEN = RED = CYAN = YELLOW = BLUE = MAGENTA = BOLD = DIM = RESET = "";
+    GRAY = GREEN = RED = CYAN = YELLOW = BLUE = MAGENTA = BOLD = DIM = RESET = HOTPINK = DIMPINK = "";
+}
+// ---------------------------------------------------------------------------
+// ASCII art logo — "NeuroSkill" in bold ██ block letters, hot pink, ™ top-right
+// ---------------------------------------------------------------------------
+const NEUROSKILL_LOGO_RAW = [
+    "███╗   ██╗███████╗██╗   ██╗██████╗  ██████╗ ███████╗██╗  ██╗██╗██╗     ██╗",
+    "████╗  ██║██╔════╝██║   ██║██╔══██╗██╔═══██╗██╔════╝██║ ██╔╝██║██║     ██║",
+    "██╔██╗ ██║█████╗  ██║   ██║██████╔╝██║   ██║███████╗█████╔╝ ██║██║     ██║",
+    "██║╚██╗██║██╔══╝  ██║   ██║██╔══██╗██║   ██║╚════██║██╔═██╗ ██║██║     ██║",
+    "██║ ╚████║███████╗╚██████╔╝██║  ██║╚██████╔╝███████║██║  ██╗██║███████╗███████╗",
+    "╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝",
+];
+function printLogo() {
+    const maxW = Math.max(...NEUROSKILL_LOGO_RAW.map(l => l.length));
+    const cols = process.stdout.columns || 80;
+    for (let i = 0; i < NEUROSKILL_LOGO_RAW.length; i++) {
+        const line = NEUROSKILL_LOGO_RAW[i].padEnd(maxW);
+        const pad = Math.max(0, Math.floor((cols - maxW - 1) / 2));
+        if (i === 0) {
+            // ™ at top-right corner of the art block
+            console.log(" ".repeat(pad) + HOTPINK + line + DIMPINK + "™" + RESET);
+        }
+        else {
+            console.log(" ".repeat(pad) + HOTPINK + line + RESET);
+        }
+    }
 }
 let jsonMode = false;
 let fullMode = false;
@@ -1281,8 +1276,10 @@ function parseArgs() {
  */
 function showHelp() {
     const m = (cmd, desc) => `  ${CYAN}${cmd.padEnd(50)}${RESET} ${desc}`;
+    console.log("");
+    printLogo();
     console.log(`
-${BOLD}skill cli${RESET} — command-line interface for the Skill WebSocket API
+${BOLD}neuroskill${RESET} ${DIM}v${CLI_VERSION}${RESET} — command-line interface for the Skill WebSocket API
 
 ${BOLD}USAGE${RESET}
   npx neuroskill <command> [options]
@@ -6000,7 +5997,7 @@ async function cmdLlm(args) {
                 break;
             }
             // ── Interactive REPL mode: no message arg provided ────────────────────
-            const readline = await Promise.resolve().then(() => __importStar(require("readline")));
+            const readline = await import("readline");
             const rl = readline.createInterface({
                 input: process.stdin,
                 output: process.stdout,
@@ -6384,7 +6381,8 @@ async function main() {
     if (noColorMode || jsonMode)
         applyNoColor();
     if (args.command === "version") {
-        console.log(`neuroskill ${CLI_VERSION}\nhttps://www.neuroskill.com`);
+        printLogo();
+        console.log(`\n  ${DIM}v${CLI_VERSION}${RESET}  ${DIM}https://www.neuroskill.com${RESET}`);
         process.exit(0);
     }
     if (args.command === "help")

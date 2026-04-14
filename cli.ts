@@ -259,6 +259,8 @@ let MAGENTA= "\x1b[35m";
 let BOLD   = "\x1b[1m";
 let DIM    = "\x1b[2m";
 let RESET  = "\x1b[0m";
+let HOTPINK = "\x1b[38;2;255;20;147m";
+let DIMPINK = "\x1b[38;2;180;80;130m";
 
 /**
  * Zero-out all ANSI escape constants so no color codes reach stdout/stderr.
@@ -266,7 +268,35 @@ let RESET  = "\x1b[0m";
  * or the user passes `--no-color`.
  */
 function applyNoColor(): void {
-  GRAY = GREEN = RED = CYAN = YELLOW = BLUE = MAGENTA = BOLD = DIM = RESET = "";
+  GRAY = GREEN = RED = CYAN = YELLOW = BLUE = MAGENTA = BOLD = DIM = RESET = HOTPINK = DIMPINK = "";
+}
+
+// ---------------------------------------------------------------------------
+// ASCII art logo — "NeuroSkill" in bold ██ block letters, hot pink, ™ top-right
+// ---------------------------------------------------------------------------
+
+const NEUROSKILL_LOGO_RAW = [
+  "███╗   ██╗███████╗██╗   ██╗██████╗  ██████╗ ███████╗██╗  ██╗██╗██╗     ██╗",
+  "████╗  ██║██╔════╝██║   ██║██╔══██╗██╔═══██╗██╔════╝██║ ██╔╝██║██║     ██║",
+  "██╔██╗ ██║█████╗  ██║   ██║██████╔╝██║   ██║███████╗█████╔╝ ██║██║     ██║",
+  "██║╚██╗██║██╔══╝  ██║   ██║██╔══██╗██║   ██║╚════██║██╔═██╗ ██║██║     ██║",
+  "██║ ╚████║███████╗╚██████╔╝██║  ██║╚██████╔╝███████║██║  ██╗██║███████╗███████╗",
+  "╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝",
+];
+
+function printLogo(): void {
+  const maxW = Math.max(...NEUROSKILL_LOGO_RAW.map(l => l.length));
+  const cols = process.stdout.columns || 80;
+  for (let i = 0; i < NEUROSKILL_LOGO_RAW.length; i++) {
+    const line = NEUROSKILL_LOGO_RAW[i].padEnd(maxW);
+    const pad = Math.max(0, Math.floor((cols - maxW - 1) / 2));
+    if (i === 0) {
+      // ™ at top-right corner of the art block
+      console.log(" ".repeat(pad) + HOTPINK + line + DIMPINK + "™" + RESET);
+    } else {
+      console.log(" ".repeat(pad) + HOTPINK + line + RESET);
+    }
+  }
 }
 
 let jsonMode = false;
@@ -1300,8 +1330,10 @@ function parseArgs(): Args {
  */
 function showHelp(): never {
   const m = (cmd: string, desc: string) => `  ${CYAN}${cmd.padEnd(50)}${RESET} ${desc}`;
+  console.log("");
+  printLogo();
   console.log(`
-${BOLD}skill cli${RESET} — command-line interface for the Skill WebSocket API
+${BOLD}neuroskill${RESET} ${DIM}v${CLI_VERSION}${RESET} — command-line interface for the Skill WebSocket API
 
 ${BOLD}USAGE${RESET}
   npx neuroskill <command> [options]
@@ -6535,7 +6567,8 @@ async function main(): Promise<void> {
   if (noColorMode || jsonMode) applyNoColor();
 
   if (args.command === "version") {
-    console.log(`neuroskill ${CLI_VERSION}\nhttps://www.neuroskill.com`);
+    printLogo();
+    console.log(`\n  ${DIM}v${CLI_VERSION}${RESET}  ${DIM}https://www.neuroskill.com${RESET}`);
     process.exit(0);
   }
   if (args.command === "help") showHelp();
