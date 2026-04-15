@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 /** Current CLI version — bump when breaking changes are made. */
-const CLI_VERSION = "1.3.0";
+const CLI_VERSION = "0.1.1";
 /**
  * npx neuroskill — Command-line interface for the Skill WebSocket API.
  *
