@@ -62,6 +62,13 @@ const CLI_VERSION = "0.1.1";
  *   calendar [--start --end]       List calendar events in a time range (default: next 7 days)
  *   calendar status                Show calendar access status + platform
  *   calendar permission            Request calendar access (macOS — shows system dialog)
+ *   terminal                       Show shell hook status across all shells
+ *   terminal status                Check installed hooks, health, recent command count
+ *   terminal install [shell]       Install tracking hook (default: zsh). Also: bash, fish, powershell
+ *   terminal uninstall [shell]     Remove tracking hook from shell rc file
+ *   terminal commands              Show recent tracked terminal commands (last hour)
+ *   terminal impact                Focus delta by terminal command category (brain-fused)
+ *   terminal loops                 Detected edit-build-test dev loops (last hour)
  *   dnd                            Show DND automation status (config + live eligibility + OS state)
  *   dnd on                         Force-enable DND immediately (bypass EEG threshold)
  *   dnd off                        Force-disable DND immediately
@@ -1258,6 +1265,15 @@ function parseArgs(): Args {
       args.text = a; // JSON value for set operations
     }
     else if (args.command === "activity" && !args.subAction) {
+      args.subAction = a.toLowerCase();
+    }
+    else if (args.command === "terminal" && !args.subAction) {
+      args.subAction = a.toLowerCase();
+    }
+    else if (args.command === "terminal" && (args.subAction === "install" || args.subAction === "uninstall" || args.subAction === "remove") && !args.text) {
+      args.text = a.toLowerCase(); // shell name: zsh, bash, fish, powershell
+    }
+    else if (args.command === "brain" && !args.subAction) {
       args.subAction = a.toLowerCase();
     }
     else if (args.command === "models" && !args.subAction) {
@@ -5623,11 +5639,412 @@ async function cmdSettings(args: Args): Promise<void> {
 
 async function cmdActivity(args: Args): Promise<void> {
   const action = (args.subAction || "bands").toLowerCase();
-  if (action === "bands")   return printJson(await restGet("/activity/latest-bands"));
-  if (action === "window")  return printJson(await restGet("/activity/current-window"));
-  if (action === "input")   return printJson(await restGet("/activity/last-input"));
-  if (action === "windows") return printJson(await restPost("/activity/recent-windows", { limit: args.limit ?? 20 }));
-  printError(`unknown activity action: ${action}. Use: bands, window, input, windows`);
+  const limit = args.limit ?? 20;
+  const now = Math.floor(Date.now() / 1000);
+  const weekAgo = now - 7 * 86400;
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  const todayStart = Math.floor(d.getTime() / 1000);
+
+  if (action === "bands")       return printJson(await restGet("/activity/latest-bands"));
+  if (action === "window")      return printJson(await restGet("/activity/current-window"));
+  if (action === "input")       return printJson(await restGet("/activity/last-input"));
+  if (action === "windows")     return printJson(await restPost("/activity/recent-windows", { limit }));
+  if (action === "files")       return printJson(await restPost("/activity/recent-files", { limit, since: weekAgo }));
+  if (action === "top-files")   return printJson(await restPost("/activity/top-files", { limit: 10, since: weekAgo }));
+  if (action === "top-projects") return printJson(await restPost("/activity/top-projects", { limit: 10, since: weekAgo }));
+  if (action === "languages")   return printJson(await restPost("/activity/language-breakdown", { since: weekAgo }));
+  if (action === "sessions")    return printJson(await restPost("/activity/focus-sessions", { limit, since: weekAgo }));
+  if (action === "meetings")    return printJson(await restPost("/activity/meetings-in-range", { from_ts: weekAgo, to_ts: now }));
+  if (action === "clipboard")   return printJson(await restPost("/activity/recent-clipboard", { limit }));
+  if (action === "builds")      return printJson(await restGet("/activity/recent-builds"));
+  if (action === "heatmap")     return printJson(await restPost("/activity/hourly-heatmap", { since: weekAgo }));
+  if (action === "switches")    return printJson(await restPost("/activity/context-switch-rate", { from_ts: weekAgo, to_ts: now }));
+  if (action === "summary")     return printJson(await restPost("/activity/daily-summary", { dayStart: todayStart }));
+  if (action === "score")       return printJson(await restPost("/activity/productivity-score", { day_start: todayStart }));
+  if (action === "digest")      return printJson(await restPost("/activity/weekly-digest", { day_start: weekAgo }));
+  if (action === "stale")       return printJson(await restPost("/activity/stale-files", { since: weekAgo }));
+  if (action === "timeline")    return printJson(await restPost("/activity/timeline", { since: weekAgo, limit: 50 }));
+  if (action === "terminal-commands") return printJson(await restPost("/brain/terminal-commands", { since: weekAgo, limit }));
+
+  printError(`unknown activity action: ${action}. Use: bands, window, input, windows, files, top-files, top-projects, languages, sessions, meetings, clipboard, builds, heatmap, switches, summary, score, digest, stale, timeline, terminal-commands`);
+}
+
+// ── Brain Awareness ──────────────────────────────────────────────────────────
+
+async function cmdBrain(args: Args): Promise<void> {
+  const action = (args.subAction || "flow").toLowerCase();
+  const now = Math.floor(Date.now() / 1000);
+  const weekAgo = now - 7 * 86400;
+  const db = new Date(); db.setHours(0, 0, 0, 0);
+  const todayStart = Math.floor(db.getTime() / 1000);
+
+  if (action === "flow")         return printJson(await restPost("/brain/flow-state", { windowSecs: 300 }));
+  if (action === "load")         return printJson(await restPost("/brain/cognitive-load", { since: weekAgo, groupBy: "language" }));
+  if (action === "load-files")   return printJson(await restPost("/brain/cognitive-load", { since: weekAgo, groupBy: "file" }));
+  if (action === "recovery")     return printJson(await restPost("/brain/meeting-recovery", { since: weekAgo, limit: 10 }));
+  if (action === "optimal")      return printJson(await restPost("/brain/optimal-hours", { since: weekAgo, topN: 5 }));
+  if (action === "fatigue")      return printJson(await restGet("/brain/fatigue"));
+  if (action === "struggle")     return printJson(await restPost("/brain/struggle", { since: weekAgo, threshold: 3 }));
+  if (action === "report")       return printJson(await restPost("/brain/daily-report", { dayStart: todayStart }));
+  if (action === "breaks")       return printJson(await restPost("/brain/break-timing", { since: weekAgo }));
+  if (action === "streak")        return printJson(await restPost("/brain/streak", { minDeepWorkMins: 60 }));
+  if (action === "task")          return printJson(await restPost("/brain/task-type", { windowSecs: 300 }));
+  if (action === "stuck")         return printJson(await restPost("/brain/struggle-predict", { windowSecs: 600 }));
+  if (action === "interruptions") return printJson(await restPost("/brain/interruption-recovery", { since: weekAgo, limit: 20 }));
+  if (action === "correlation")   return printJson(await restPost("/brain/code-eeg", { since: weekAgo }));
+  if (action === "terminal-impact") return printJson(await restPost("/brain/terminal-impact", { since: todayStart }));
+  if (action === "context-cost")    return printJson(await restPost("/brain/context-cost", { since: todayStart }));
+  if (action === "dev-loops")       return printJson(await restPost("/brain/dev-loops", { windowSecs: 3600 }));
+
+  printError(`unknown brain action: ${action}. Use: flow, load, load-files, recovery, optimal, fatigue, struggle, report, breaks, streak, task, stuck, interruptions, correlation, terminal-impact, context-cost, dev-loops`);
+}
+
+// ── Terminal Integration ─────────────────────────────────────────────────────
+
+async function cmdTerminal(args: Args): Promise<void> {
+  const action = (args.subAction || "status").toLowerCase();
+  const shells = ["zsh", "bash", "fish", "powershell"];
+
+  if (action === "status") {
+    print(`${BOLD}Terminal Shell Hooks${RESET}\n`);
+    for (const shell of shells) {
+      try {
+        const status = await restPost("/activity/shell-hook-status", { shell }) as any;
+        const icon = status.installed ? `${GREEN}●${RESET}` : status.available ? `${YELLOW}○${RESET}` : `${DIM}○${RESET}`;
+        const state = status.installed ? `${GREEN}installed${RESET}` :
+                      status.available ? `${YELLOW}not installed${RESET}` : `${DIM}unavailable${RESET}`;
+        print(`  ${icon} ${BOLD}${shell.padEnd(12)}${RESET} ${state}`);
+        if (status.installed) {
+          const health = [];
+          if (!status.hook_exists) health.push(`${RED}hook file missing${RESET}`);
+          if (!status.rc_has_line) health.push(`${RED}rc line missing${RESET}`);
+          if (health.length > 0) print(`    ${DIM}issues:${RESET} ${health.join(", ")}`);
+          else print(`    ${DIM}${status.rc_file}${RESET}`);
+        }
+      } catch {
+        print(`  ${DIM}○${RESET} ${BOLD}${shell.padEnd(12)}${RESET} ${DIM}(check failed)${RESET}`);
+      }
+    }
+    // Show recent command count
+    const now = Math.floor(Date.now() / 1000);
+    try {
+      const cmds = await restPost("/brain/terminal-commands", { since: now - 3600, limit: 100 }) as any[];
+      print(`\n  ${DIM}Commands tracked (last hour):${RESET} ${BOLD}${cmds.length}${RESET}`);
+    } catch {}
+    return;
+  }
+
+  if (action === "install") {
+    const shell = args.text || "zsh";
+    print(`Installing ${BOLD}${shell}${RESET} shell hook...`);
+    const result = await restPost("/activity/install-shell-hook", { shell }) as any;
+    if (result?.ok) {
+      if (result.already_installed) {
+        print(`${GREEN}Already installed${RESET} in ${result.rc_file}`);
+      } else {
+        print(`${GREEN}Installed${RESET} — hook written to ${result.hook_path}`);
+        print(`  Source line added to ${result.rc_file}`);
+        print(`  ${YELLOW}Open a new terminal for it to take effect.${RESET}`);
+      }
+      if (result.instructions) print(`\n${result.instructions}`);
+    } else {
+      printError(result?.error ?? "installation failed");
+    }
+    return;
+  }
+
+  if (action === "uninstall" || action === "remove") {
+    const shell = args.text || "zsh";
+    print(`Removing ${BOLD}${shell}${RESET} shell hook...`);
+    const result = await restPost("/activity/uninstall-shell-hook", { shell }) as any;
+    if (result?.ok) {
+      print(`${GREEN}Removed${RESET} — cleaned ${result.rc_file}`);
+      print(`  ${YELLOW}Open a new terminal to apply.${RESET}`);
+    } else {
+      printError(result?.error ?? "removal failed");
+    }
+    return;
+  }
+
+  if (action === "commands") {
+    const now = Math.floor(Date.now() / 1000);
+    const since = now - 3600;
+    const cmds = await restPost("/brain/terminal-commands", { since, limit: 30 }) as any[];
+    if (cmds.length === 0) {
+      print(`${DIM}No commands tracked in the last hour. Install a shell hook first: neuroskill terminal install${RESET}`);
+      return;
+    }
+    print(`${BOLD}Recent Terminal Commands${RESET} ${DIM}(last hour)${RESET}\n`);
+    for (const cmd of cmds) {
+      const time = new Date(cmd.started_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const exit = cmd.exit_code === null ? `${YELLOW}~${RESET}` :
+                   cmd.exit_code === 0 ? `${GREEN}0${RESET}` :
+                   `${RED}${cmd.exit_code}${RESET}`;
+      const cat = cmd.category ? `${DIM}[${cmd.category}]${RESET}` : "";
+      print(`  ${DIM}${time}${RESET}  ${exit}  ${cat} ${cmd.command}`);
+    }
+    return;
+  }
+
+  if (action === "impact") {
+    return printJson(await restPost("/brain/terminal-impact", { since: 0 }));
+  }
+
+  if (action === "loops") {
+    return printJson(await restPost("/brain/dev-loops", { windowSecs: 3600 }));
+  }
+
+  printError(`unknown terminal action: ${action}. Use: status, install [shell], uninstall [shell], commands, impact, loops`);
+}
+
+// ── VS Code Extension Install ────────────────────────────────────────────────
+
+async function cmdVscodeInstall(): Promise<void> {
+  const { execSync } = await import("child_process");
+  const path = await import("path");
+  const fs = await import("fs");
+
+  // Find VS Code / VSCodium / Cursor CLI across all platforms
+  const codePaths = [
+    // PATH-based (works everywhere if symlinked)
+    "code", "codium", "cursor",
+    // macOS
+    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+    "/Applications/VSCodium.app/Contents/Resources/app/bin/codium",
+    "/Applications/Cursor.app/Contents/Resources/app/bin/code",
+    // Linux (common install locations)
+    "/usr/bin/code", "/usr/bin/codium",
+    "/usr/share/code/bin/code",
+    "/snap/bin/code", "/snap/bin/codium",
+    "/usr/bin/cursor",
+    // Windows (typical install paths)
+    `${process.env.LOCALAPPDATA}\\Programs\\Microsoft VS Code\\bin\\code.cmd`,
+    `${process.env.LOCALAPPDATA}\\Programs\\VSCodium\\bin\\codium.cmd`,
+    `${process.env.LOCALAPPDATA}\\Programs\\cursor\\resources\\app\\bin\\code.cmd`,
+    `${process.env.PROGRAMFILES}\\Microsoft VS Code\\bin\\code.cmd`,
+  ].filter(Boolean);
+  let codeBin: string | null = null;
+  for (const p of codePaths) {
+    try { execSync(`"${p}" --version`, { stdio: "ignore" }); codeBin = p; break; } catch {}
+  }
+  if (!codeBin) {
+    printError("VS Code / VSCodium / Cursor not found. Install one first, then run this command again.");
+    return;
+  }
+
+  // Build the extension from the submodule
+  const extDir = path.resolve(__dirname, "..", "..", "extensions", "vscode");
+  if (!fs.existsSync(path.join(extDir, "package.json"))) {
+    printError(`Extension not found at ${extDir}. Run: git submodule update --init`);
+    return;
+  }
+
+  print(`${BOLD}Installing NeuroSkill VS Code extension...${RESET}`);
+  try {
+    execSync("npm install", { cwd: extDir, stdio: "ignore" });
+    execSync("./node_modules/.bin/tsc -p tsconfig.json", { cwd: extDir, stdio: "ignore" });
+    const vsixOut = execSync("npx @vscode/vsce package --no-dependencies 2>&1", { cwd: extDir }).toString();
+    const vsixMatch = vsixOut.match(/Packaged:\s+(.+\.vsix)/);
+    const vsixFile = vsixMatch ? path.join(extDir, path.basename(vsixMatch[1])) : path.join(extDir, "neuroskill-0.1.0.vsix");
+    if (!fs.existsSync(vsixFile)) {
+      printError("Failed to package extension.");
+      return;
+    }
+    execSync(`"${codeBin}" --install-extension "${vsixFile}" --force`, { stdio: "inherit" });
+    print(`${BOLD}✓${RESET} NeuroSkill extension installed. Reload VS Code to activate.`);
+  } catch (e: any) {
+    printError(`Install failed: ${e.message ?? e}`);
+  }
+}
+
+// ── Browser Extension Install ────────────────────────────────────────────────
+
+async function cmdBrowser(args: Args): Promise<void> {
+  const action = (args.subAction || "status").toLowerCase();
+  const now = Math.floor(Date.now() / 1000);
+  const weekAgo = now - 7 * 86400;
+  const db = new Date(); db.setHours(0, 0, 0, 0);
+  const todayStart = Math.floor(db.getTime() / 1000);
+
+  if (action === "install") return cmdBrowserInstall();
+
+  // ── Analytics sub-commands ──────────────────────────────────────────
+  if (action === "status" || action === "distraction")
+    return printJson(await restPost("/brain/browser-distraction", { windowSecs: 300 }));
+  if (action === "focus")
+    return printJson(await restPost("/brain/browser-focus", { since: weekAgo, limit: 20 }));
+  if (action === "content")
+    return printJson(await restPost("/brain/browser-content", { since: todayStart }));
+  if (action === "domains")
+    return printJson(await restPost("/brain/browser-domains", { since: todayStart }));
+  if (action === "research")
+    return printJson(await restPost("/brain/browser-research", { since: todayStart }));
+  if (action === "learning")
+    return printJson(await restPost("/brain/browser-learning", { since: weekAgo }));
+  if (action === "procrastination")
+    return printJson(await restPost("/brain/browser-procrastination", { windowSecs: 600 }));
+  if (action === "deep-reading")
+    return printJson(await restPost("/brain/browser-deep-reading", { since: todayStart }));
+  if (action === "video-roi")
+    return printJson(await restPost("/brain/browser-video-roi", { since: todayStart }));
+  if (action === "email")
+    return printJson(await restPost("/brain/browser-email-impact", { since: todayStart }));
+  if (action === "tab-load")
+    return printJson(await restPost("/brain/browser-tab-load", { since: weekAgo }));
+  if (action === "weekday")
+    return printJson(await restPost("/brain/browser-weekday", { since: weekAgo }));
+  if (action === "night-owl")
+    return printJson(await restPost("/brain/browser-night-owl", { since: weekAgo }));
+  if (action === "copypaste")
+    return printJson(await restPost("/brain/browser-copypaste", { since: todayStart }));
+  if (action === "post-meeting")
+    return printJson(await restPost("/brain/browser-post-meeting", { since: todayStart }));
+  if (action === "switch-tax")
+    return printJson(await restPost("/brain/browser-switch-tax", { since: todayStart }));
+  if (action === "ai" || action === "ai-effectiveness")
+    return printJson(await restPost("/brain/browser-ai-effectiveness", { since: weekAgo }));
+  if (action === "optimal-hours")
+    return printJson(await restPost("/brain/browser-optimal-hours", { since: weekAgo }));
+  if (action === "feedback")
+    return printJson(await restGet("/brain/feedback"));
+  if (action === "llm")
+    return printJson(await restPost("/brain/browser-llm", { since: weekAgo }));
+
+  printError(`unknown browser action: ${action}. Use: install, status, focus, content, domains, research, learning, procrastination, deep-reading, video-roi, email, tab-load, weekday, night-owl, copypaste, post-meeting, switch-tax, ai, optimal-hours, feedback, llm`);
+}
+
+async function cmdBrowserInstall(): Promise<void> {
+  const { execSync } = await import("child_process");
+  const path = await import("path");
+  const fs = await import("fs");
+
+  const extDir = path.resolve(__dirname, "..", "..", "extensions", "browser");
+  if (!fs.existsSync(path.join(extDir, "package.json"))) {
+    printError(`Browser extension not found at ${extDir}. Run: git submodule update --init`);
+    return;
+  }
+
+  // Build all browser targets
+  print(`${BOLD}Building NeuroSkill browser extensions...${RESET}`);
+  try {
+    execSync("npm install", { cwd: extDir, stdio: "ignore" });
+  } catch (e: any) {
+    printError(`npm install failed: ${e.message ?? e}`);
+    return;
+  }
+
+  // ── Chrome / Chromium ───────────────────────────────────────────────────
+  const chromePaths = [
+    // macOS
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Arc.app/Contents/MacOS/Arc",
+    // Linux
+    "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium", "/usr/bin/chromium-browser",
+    "/usr/bin/brave-browser",
+    "/usr/bin/microsoft-edge",
+    // Windows
+    `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`,
+    `${process.env["PROGRAMFILES(X86)"]}\\Google\\Chrome\\Application\\chrome.exe`,
+    `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
+    `${process.env.PROGRAMFILES}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
+  ].filter(Boolean);
+
+  let chromeFound = false;
+  for (const p of chromePaths) {
+    if (fs.existsSync(p)) { chromeFound = true; break; }
+  }
+
+  if (chromeFound) {
+    try {
+      execSync("BROWSER_TARGET=chrome node build/build.mjs", { cwd: extDir, stdio: "ignore" });
+      const distDir = path.join(extDir, "dist", "chrome");
+
+      // macOS: install via managed preferences (ExtensionInstallForcelist)
+      if (process.platform === "darwin") {
+        // Chrome supports loading unpacked extensions via --load-extension flag at launch,
+        // but for persistent install we write to the external_extensions directory.
+        const extJsonDir = path.join(
+          process.env.HOME || "~", "Library", "Application Support",
+          "Google", "Chrome", "External Extensions",
+        );
+        fs.mkdirSync(extJsonDir, { recursive: true });
+        // Write external extension JSON pointing to the unpacked dist
+        const extJson = { external_crx: "", external_version: "0.1.0", path: distDir };
+        fs.writeFileSync(
+          path.join(extJsonDir, "neuroskill-browser.json"),
+          JSON.stringify(extJson, null, 2),
+        );
+      }
+
+      print(`${BOLD}✓${RESET} Chrome extension built at ${distDir}`);
+      print(`  Load in Chrome: chrome://extensions → Enable Developer Mode → Load Unpacked → select ${distDir}`);
+    } catch (e: any) {
+      printError(`Chrome build failed: ${e.message ?? e}`);
+    }
+  }
+
+  // ── Firefox ─────────────────────────────────────────────────────────────
+  const firefoxPaths = [
+    "/Applications/Firefox.app/Contents/MacOS/firefox",
+    "/usr/bin/firefox", "/usr/bin/firefox-esr",
+    "/snap/bin/firefox",
+    `${process.env.PROGRAMFILES}\\Mozilla Firefox\\firefox.exe`,
+  ].filter(Boolean);
+
+  let firefoxFound = false;
+  for (const p of firefoxPaths) {
+    if (fs.existsSync(p)) { firefoxFound = true; break; }
+  }
+
+  if (firefoxFound) {
+    try {
+      execSync("BROWSER_TARGET=firefox node build/build.mjs", { cwd: extDir, stdio: "ignore" });
+      const distDir = path.join(extDir, "dist", "firefox");
+
+      // Firefox supports loading temporary add-ons via about:debugging
+      // or permanently via profile extensions directory
+      if (process.platform === "darwin") {
+        const profilesDir = path.join(process.env.HOME || "~", "Library", "Application Support", "Firefox", "Profiles");
+        if (fs.existsSync(profilesDir)) {
+          const profiles = fs.readdirSync(profilesDir).filter((d: string) => d.endsWith(".default-release") || d.endsWith(".default"));
+          for (const profile of profiles) {
+            const extDir2 = path.join(profilesDir, profile, "extensions");
+            fs.mkdirSync(extDir2, { recursive: true });
+            // Write a pointer file (extension ID → path) for Firefox to load
+            fs.writeFileSync(
+              path.join(extDir2, "neuroskill@neuroskill.com"),
+              distDir,
+            );
+          }
+        }
+      }
+
+      print(`${BOLD}✓${RESET} Firefox extension built at ${distDir}`);
+      print(`  Load in Firefox: about:debugging → This Firefox → Load Temporary Add-on → select ${path.join(distDir, "manifest.json")}`);
+    } catch (e: any) {
+      printError(`Firefox build failed: ${e.message ?? e}`);
+    }
+  }
+
+  // ── Safari ──────────────────────────────────────────────────────────────
+  if (process.platform === "darwin") {
+    try {
+      execSync("BROWSER_TARGET=safari node build/build.mjs", { cwd: extDir, stdio: "ignore" });
+      const distDir = path.join(extDir, "dist", "safari");
+      print(`${BOLD}✓${RESET} Safari extension built at ${distDir}`);
+      print(`  Safari requires an Xcode wrapper app. Use xcrun safari-web-extension-converter ${distDir} to generate the Xcode project.`);
+    } catch (e: any) {
+      printError(`Safari build failed: ${e.message ?? e}`);
+    }
+  }
+
+  if (!chromeFound && !firefoxFound && process.platform !== "darwin") {
+    printError("No supported browser found. Install Chrome or Firefox first.");
+  }
 }
 
 // ── EXG Models ───────────────────────────────────────────────────────────────
@@ -6771,6 +7188,9 @@ async function main(): Promise<void> {
       case "activity":
         await cmdActivity(args);
         break;
+      case "brain":
+        await cmdBrain(args);
+        break;
       case "models":
         await cmdModels(args);
         break;
@@ -6797,6 +7217,15 @@ async function main(): Promise<void> {
         printResult(r);
         break;
       }
+      case "terminal":
+        await cmdTerminal(args);
+        break;
+      case "vscode":
+        await cmdVscodeInstall();
+        break;
+      case "browser":
+        await cmdBrowser(args);
+        break;
       case "raw":
         if (!args.rawJson) printError("usage: neuroskill raw '{\"command\":\"status\"}'");
         await cmdRaw(args.rawJson!);

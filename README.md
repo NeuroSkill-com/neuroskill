@@ -42,6 +42,9 @@
 - **Interactive graph search** — cross-modal 4-layer graph (labels → EEG → labels)
 - **Proactive Hooks** — CRUD for automated triggers based on EEG state + keyword matching
 - **Apple HealthKit** — query sleep, workouts, heart rate, steps, and metrics synced from iOS
+- **Terminal tracking** — OS-wide shell hooks (zsh/bash/fish/PowerShell) capture every command with exit codes, auto-categorization (50+ patterns), and EEG correlation
+- **Brain awareness** — flow state, fatigue, struggle prediction, task type detection, optimal hours, dev loop analysis, terminal impact on focus, context switch cost
+- **VS Code extension** — sidebar with flow gauge, workspace activity, terminal commands, daily report, energy, struggle, optimal hours, and environment tracking
 - **Do Not Disturb** — automated DND based on focus score threshold
 - **LLM inference** — built-in model management, download, and multi-turn chat with vision support
 - **Calibration profiles** — full CRUD (create, update, delete) for calibration protocols
@@ -185,6 +188,15 @@ The CLI probes WebSocket first and silently falls back to HTTP. Informational me
 | `llm add <repo> <file>` | Add an external HF model and download it |
 | `llm select <file>` | Set the active text model |
 | `llm chat` / `llm chat "msg"` | Interactive multi-turn chat REPL or single-shot |
+| `activity <sub>` | Activity tracking: `summary`, `score`, `files`, `sessions`, `meetings`, `terminal-commands`, `timeline` |
+| `brain <sub>` | Brain awareness: `flow`, `stuck`, `task`, `fatigue`, `report`, `optimal`, `terminal-impact`, `context-cost`, `dev-loops` |
+| `terminal` | Shell hook status — installed/health per shell + command count |
+| `terminal install [shell]` | Install tracking hook (`zsh`, `bash`, `fish`, `powershell`) |
+| `terminal uninstall [shell]` | Remove hook from shell rc file |
+| `terminal commands` | Recent tracked terminal commands (last hour) |
+| `terminal impact` | Focus delta by terminal command category |
+| `terminal loops` | Detected edit-build-test dev loops |
+| `vscode` | Auto-install the VS Code extension |
 | `connect` | Check connection status, auth token, and iroh — guide through setup |
 | `batch '[{...},...]'` | Send multiple commands in one request via `POST /v1/batch` |
 | `raw '{"command":"..."}'` | Send arbitrary JSON and print full response |
