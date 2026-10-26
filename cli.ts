@@ -1428,7 +1428,7 @@ ${m("hooks enable <name>",                           "enable a hook")}
 ${m("hooks disable <name>",                          "disable a hook")}
 ${m("hooks update <name> [--keywords …] [opts]",    "update fields on an existing hook")}
 ${m('hooks suggest "kw1,kw2"',                       "suggest threshold from matching labels + recent EEG embeddings")}
-${m("hooks log [--limit <n>] [--offset <n>]",       "show hook trigger audit history from hooks.sqlite")}
+${m("hooks log [--limit <n>] [--offset <n>]",       "show hook trigger audit history from hooks.duckdb")}
 ${m("connect",                                        "check connection status and guide through setup")}
 ${m("iroh info",                                     "show iroh endpoint + auth summary")}
 ${m("iroh totp list|create|qr|revoke",               "manage iroh TOTP credentials")}
